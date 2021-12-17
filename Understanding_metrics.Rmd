@@ -1,0 +1,758 @@
+---
+title: "Quality control and filtering"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r eval=FALSE, include=FALSE}
+install.packages("ggpubr")
+install.packages("ggplot2")
+install.packages("corrplot")
+install.packages("kableExtra")
+install.packages("xlsx")
+
+install.packages("plyr")
+
+
+```
+
+
+```{r message=FALSE}
+library(dplyr)
+library(reshape2)
+library(kableExtra)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(corrplot)
+library(RColorBrewer)
+library(plyr)
+
+```
+
+
+
+# Loading data
+
+```{r message=FALSE}
+
+data_mapping<-read.csv("data/cellranger_mapping_metrics_multiome.csv")
+
+metadata_multiome<- read.csv("data/data/tonsil_atlas_metadata_multiome.csv")
+
+```
+
+# Mapping data Table 
+
+```{r}
+data_mapping$library.name<- revalue(data_mapping$Sample.ID,c( "ulx1v6sz_8a2nvf1c" = "BCLL_8_T_1",
+        "wdp0p728_jf6w68km" = "BCLL_8_T_2",
+        "co7dzuup_xuczw9vc" = "BCLL_9_T_1",
+        "qmzb59ew_t11l8dzm"="BCLL_9_T_2",
+        "pd9avu0k_kf9ft6kk"="BCLL_14_T_1",
+        "vuuqir4h_wfkyb5v8"="BCLL_14_T_2",
+        "admae8w2_89i88tvv"="BCLL_15_T_1",
+        "sr20954q_yiuuoxng"="BCLL_15_T_2",
+        "kmbfo1ab_ie02b4ny"="BCLL_2_T_1",
+        "ryh4el3i_biv0w7ca"="BCLL_2_T_2",
+        "bs2e7lr7_mdfwypvz"="BCLL_2_T_3"),
+        warn_missing = TRUE)
+
+knitr::kable(data_mapping, caption = "Visualization of mapping data",row.names = T) %>%
+  kable_styling(
+    bootstrap_options=c("bordered")) %>%
+  scroll_box(height = "500px")
+```
+
+
+
+## Estimated number of cell 
+
+
+
+We are going to plot the estimated number of cell per library
+
+```{r pressure, echo=FALSE}
+p<- ggbarplot(data_mapping, 
+          x="library.name",
+           y="Estimated.number.of.cells",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Estimated number of cells"
+          )
+p+font("title", size = 12, face = "bold.italic")
+```
+
+# Multiome join metrics
+
+## Linked genes and linked peaks
+
+We will the number of genes and peaks which are linked to the peaks and 
+to genes or other peaks respectively.
+We can see that the samples BCLL_2_T_3, BCLL_2_T_1, BCLL_2_T_2 have almost  half amount of 
+number of genes.
+
+
+```{r echo=FALSE}
+p<- ggbarplot(data_mapping, 
+          x="library.name",
+           y="Linked.genes",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Number of genes linked to peaks"
+          )
+p+font("title", size = 12, face = "bold.italic")
+```
+
+As we can see the sample samples have also the lower number of peaks.
+Although in this case the differences is more significant than before. 
+These samples have 4 time less peaks  
+
+```{r echo=FALSE}
+p<- ggbarplot(data_mapping, 
+          x="library.name",
+           y="Linked.peaks",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Number of peaks linked to genes"
+          )
+p+font("title", size = 12, face = "bold.italic")
+
+```
+
+
+## Features linkage detected
+
+Total number of gene- peak and peak-peak linkages detected
+As we can see the samples bs2e, kmbf and ryh4 have a low number of 
+features detected, we can clasify them as low quality samples. 
+This may be because we did not recover the same amount of 
+cell /nuclei. 
+
+```{r echo=FALSE}
+p<- ggbarplot(data_mapping, 
+          x="library.name",
+           y="Feature.linkages.detected",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Features linkage detected"
+          )
+p+font("title", size = 12, face = "bold.italic")
+
+```
+
+
+
+## High quality fragments
+
+Fraction of high-quality fragments with a valid barcode that are associated with cell-containing partitions. High-quality fragments are defined as read pairs with a valid barcode that map to the nuclear genome with mapping quality > 30, are not chimeric and not duplicate
+
+
+# ATAC Cromatine Accesibility 
+
+First, We  will see the quantity of the sequenced libraries 
+
+## Sequencing metrics
+
+### Sequencing read pairs
+
+We will see the total number of sequenced read pairs assigned to the Multiome ATAC library
+
+```{r}
+par(mar=c(8,4,2,2))
+
+barplot(height = (data_mapping$ATAC.Sequenced.read.pairs), 
+        names.arg=data_mapping$library.name,col="steelblue", 
+        las=2,cex.names= 0.8,cex.axis = 0.8)
+abline(h=25000, col="red")
+
+```
+
+I can see that the data is not right. It may be because it depends on the sequencing depth.This last one may need to be adjusted 
+based on the sample complexity and experimental goal.
+
+
+### Valid Barcode
+
+Here we will see the read pair with barcode that match with the whitelist after error correction. We expect to find a higher 
+values of 85%. That means that the sample is high quality. 
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(height = (data_mapping$ATAC.Valid.barcodes), 
+        names.arg=data_mapping$library.name,col="steelblue", 
+        las=2,cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8,
+        xlab = "ID sample", 
+        ylab = "Mean raw read pairs per cell",  
+        ylim = c(0, 1))
+abline(h=0.85, col="red")
+```
+
+As we can notice all the samples are above the threshold which means that all are hight qulity
+samples with a  (almost 100%)of valid barcode
+
+
+### Percent of duplicate 
+
+We correlate the percentage of duplicate with the library size (sequenced reads pairs)
+We can see that the correlation is not very high
+That could means that the percentage of duplicate is not always hight with the 
+library size is also high. 
+```{r}
+ggscatter(data_mapping,y="ATAC.Sequenced.read.pairs", x="ATAC.Percent.duplicates",
+          add.params = list( fill = "lightgray",color="steelblue"),
+          add="reg.line", 
+          conf.int = T,
+          cor.coef = T,
+          cor.coeff.args = list(method = "pearson", label.x = 0.5, label.sep = "\n"))
+```
+
+We correlate the percentage of duplicate with the number of peaks (sequencing depth) 
+However we can see that the correlation with the sequencing depth is higher than before.
+That could mean that we find higher percentaje of duplicate when the number of peaks 
+found is high. 
+
+```{r}
+ggscatter(data_mapping,y="ATAC.Number.of.peaks", x="ATAC.Percent.duplicates",
+          add.params = list(fill = "lightgray",color="steelblue"),
+          add="reg.line", 
+          conf.int = T)+ 
+  stat_cor(method = "pearson")
+```
+
+## Cell metrics
+
+### Median high quality fragments per cell
+
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(height = (data_mapping$ATAC.Median.high.quality.fragments.per.cell), 
+        names.arg=data_mapping$library.name,col="aquamarine3", las=2,
+        cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8,
+        xlab = "ID sample", 
+        ylab = "Median high quality fragments per cell")
+abline(h=100, col="red")
+```
+
+
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(cbind(data_mapping$ATAC.Mean.raw.read.pairs.per.cell,
+              data_mapping$ATAC.Median.high.quality.fragments.per.cell) ~ data_mapping$library.name,
+        beside = TRUE,col=c("grey","steelblue"), 
+        las=2,cex.names= 0.8,cex.axis = 0.8,
+        cex.lab=0.8,xlab = "ID sample", 
+        ylab = "Mean raw read pairs per cell",ylim=c(0,60000))
+
+
+```
+### Mean raw read pairs per cell 
+
+We will see how mean raw read pairs per cell looks like which represent the total number of read pairs divided by the number of barcodes. _This metric is a function of the number of cells and sequencing depth. Suggested sequencing depth is 25,000 read pairs per cell (red line)._
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(height = (data_mapping$ATAC.Mean.raw.read.pairs.per.cell), names.arg=data_mapping$library.name,col="steelblue", las=2,cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8,xlab = "ID sample", ylab = "Mean raw read pairs per cell", ylim = c(0, 65000))
+abline(h=25000, col="red")
+```
+As we can see that  the vast mayority of samples at the level of sequencing was done correctly. Except the last 2 samples which are below the expected threshold that we understand as a correct number of read pairs per cell. 
+
+
+### Fraction of high quality fragments in cell
+
+Fraction of high quality fragments with a valid barcode that are associated with cell-containing partitions. 
+High quality fragments are defined as read pairs with a valid barcode that map to the nuclear genome with mapping quality > 30, are not chimeric and not duplicate. We expect to have more than 40% of fraction of high quality fragments in cell
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(height = (data_mapping$ATAC.Fraction.of.high.quality.fragments.in.cells), names.arg=data_mapping$library.name,col="steelblue", las=2,cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8, ylab = "Fraction of high quality fragments in cells", ylim = c(0,1))
+abline(h=0.4, col="red")
+```
+
+
+All the samples have more than 40% of fraction of high quality fragments in cell.
+However the samples bs2, mo and ryh have a significant less fraction of HQ fragments
+in cell compared to other samples
+
+
+### Fraction of transposition events in peaks in cells
+
+Fraction of transposition events that are associated with cell- containing partitions and fall within peaks.
+we expect to find more than 25% fraction in each sample. 
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(height = (data_mapping$ATAC.Fraction.of.transposition.events.in.peaks.in.cells), names.arg=data_mapping$library.name,col="steelblue", las=2,cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8, ylab = "Fraction of transposition events in peaks in cells", ylim = c(0,1))
+abline(h=0.25, col="red")
+```
+
+### correlacion fraction transposition even number of peaks
+
+
+```{r}
+ggscatter(data_mapping, x = "ATAC.Fraction.of.transposition.events.in.peaks.in.cells", y = "ATAC.Number.of.peaks",
+          add = "reg.line",                                 # Add regression line
+          conf.int = TRUE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray")
+          )+
+  stat_cor(method = "pearson", label.x = 0.6, label.y = 50000)  # Add correlation coefficient
+
+```
+
+
+## Correlation number of peaks and 
+
+## Targetting metrics.
+
+### Number of peaks
+
+This total number of peaks is dependent on sample complexity and sequencing depth.
+
+```{r}
+data_mapping$library.name<-factor(data_mapping$library.name,levels = data_mapping$library.name)
+p  <- ggplot(data = data_mapping, aes(y=ATAC.Number.of.peaks, x=library.name))  +
+               geom_bar(stat="identity", fill="steelblue")+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+ 
+               geom_text(aes(label = signif(ATAC.Number.of.peaks, 7)), color="black")
+p 
+```
+
+
+### Fraction of genome in peaks
+
+We expect to have less than 75% of fraction of bases in primary contigs that are defined as peaks in each sample. we find that the values are too low. As it is a sample type dependent, I don't have any reference value to get any conllusion. But we can see that the some samples have very different values, for instance they can varie from 0.014 to 0.051. *why is that??*
+
+```{r}
+geom.text.size = 3
+theme.size = (14/5) * geom.text.size
+
+p  <- ggplot(data = data_mapping, aes(y=ATAC.Fraction.of.genome.in.peaks, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + 
+  geom_text(aes(label = signif(ATAC.Fraction.of.genome.in.peaks, 4)), color="black",size=geom.text.size)
+
+p 
+```
+
+### Fraction of high quality fragments overlapping peaks
+
+Fraction of high quality fragments in cell barcodes that overlap called peaks. we expect to find more than *25%* fraction of high quality fragments overlapping peaks in each sample.  
+
+```{r}
+p  <- ggplot(data = data_mapping, aes(y=ATAC.Fraction.of.high.quality.fragments.overlapping.peaks, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue") + 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + 
+  geom_text(aes(label = signif(ATAC.Fraction.of.high.quality.fragments.overlapping.peaks, 4)), color="black",size=geom.text.size) + 
+  geom_hline(yintercept=0.25, linetype="dashed", color = "red", size=0.5)
+p 
+```
+
+
+### Fraction of high quality fragment overlapping TSS
+
+
+```{r}
+p  <- ggplot(data = data_mapping, aes(y=ATAC.Fraction.of.high.quality.fragments.overlapping.TSS, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+ 
+  geom_text(aes(label = signif(ATAC.Fraction.of.high.quality.fragments.overlapping.TSS, 4)), color="black",size=geom.text.size)
+#+geom_hline(yintercept=0.25, linetype="dashed", color = "red", size=0.5)
+p 
+```
+
+
+```{r}
+data.fraction.melted<-melt(data_mapping[,c("library.name","ATAC.Fraction.of.high.quality.fragments.in.cells","ATAC.Fraction.of.high.quality.fragments.overlapping.peaks","ATAC.Fraction.of.high.quality.fragments.overlapping.TSS")])
+
+```
+
+### Comparing Fraction of high quality fragments overlapping peaks vs Fraction of high quality fragment in cell
+
+If we compare bot data we can see that they have a similar behaviors 
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+barplot(cbind(data_mapping$ATAC.Fraction.of.high.quality.fragments.overlapping.peaks,data_mapping$ATAC.Fraction.of.high.quality.fragments.in.cells) ~ data_mapping$library.name,beside = TRUE,col=c("grey","steelblue"), las=2,cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8, ylab = "Mean raw read pairs per cell", ylim=c(0,1))
+
+legend(x = "top", legend =  c("Fraction of HQ frag. overlapping peaks", "Fraction of HQ frag. in cells"),fill=c("grey","darkcyan"),cex = 0.6)
+```
+
+
+### Comparing Fraction of high quality fragments overlapping peaks vs Fraction of high quality fragment overlappng TSS
+
+
+```{r}
+par(mar=c(8,4,2,2))
+
+barplot(cbind(data_mapping$ATAC.Fraction.of.high.quality.fragments.overlapping.peaks,data_mapping$ATAC.Fraction.of.high.quality.fragments.overlapping.TSS) ~ data_mapping$library.name,beside = TRUE,col=c("grey","steelblue"), las=2,cex.names= 0.8,cex.axis = 0.8,cex.lab=0.8, ylab = "Mean raw read pairs per cell",legend = TRUE,ylim=c(0,0.9))
+
+legend(x = "top", legend =  c("Fraction of HQ frag. overlapping peaks", "Fraction of HQ frag overlapping TSS"),fill=c("grey","darkcyan"),cex = 0.6)
+```
+
+
+### Comparing fraction 
+
+```{r}
+ggbarplot(data.fraction.melted,x = "library.name", y = "value",
+          fill = "variable", color = "variable", 
+          palette = c("Dark2"),
+          label = round(data.fraction.melted$value,2),
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          position = position_dodge(0.8),
+          ggtheme = theme_pubr(x.text.angle = 45),
+          legend = ("top"),
+          ylim=c(0,0.95))+
+  font("legend.text", size = 5)+
+  font("legend.title",size=6)
+
+```
+
+### Enrichment score of transcription start sites (TSS)
+
+
+The TSS profile is the summed number of cut sites per base in a window of 2,000 bases around all the annotated TSSs, normalized by the minimum signal in the window. 
+
+TSS enrichment score is a ratio between aggregate distribution of reads centered on TSSs and that flanking the corresponding TSSs. TSS score = the depth of TSS (each 100bp window within 1000 bp each side) / the depth of end flanks (100bp each end).
+
+We expect to have a larger enrichment of TSS score which should be higher than 5 (red line). When the TSS enrichment score is higher we can say that that chromatin region is accessible.
+
+```{r}
+p  <- ggplot(data = data_mapping, aes(y=ATAC.TSS.enrichment.score, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45, vjust = 0.4, hjust=0.4))+ 
+  geom_text(aes(label = signif(ATAC.TSS.enrichment.score, 4)), color="black") +geom_hline(yintercept=5, linetype="dashed", color = "red", size=0.5)
+p 
+```
+
+#### Mapping of Transcription Start Sites – TSS
+
+A transcription start site (TSS) is the location where the first DNA nucleotide is transcribed into RNA. It is difficult to determine the exact position of the TSS using bioinformatics, but experimental methods can be used to locate it, notably high throughput sequencing.
+
+*Transcription Start Site (TSS) Enrichment Score*
+
+The TSS enrichment calculation is a signal to noise calculation. The reads around a reference set of TSSs are collected to form an aggregate distribution of reads centered on the TSSs and extending to 2000 bp in either direction (for a total of 4000bp). This distribution is then normalized by taking the average read depth in the 100 bps at each of the end flanks of the distribution (for a total of 200bp of averaged data) and calculating a fold change at each position over that average read depth. This means that the flanks should start at 1, and if there is high read signal at transcription start sites (highly open regions of the genome) there should be an increase in signal up to a peak in the middle. We take the signal value at the center of the distribution after this normalization as our TSS enrichment metric. Used to evaluate ATAC-seq. 
+
+
+As peaks are regions enriched for open chromatin, and thus have potential for regulatory function, observing the location of peaks with respect to genes can be insightful. We use bedtools closest -D=b to associate each peak with genes based on closest transcription start sites (packaged within the reference) such that the peak is within 1000 bases upstream or 100 bases downstream of the TSS.
+
+For each gene, we define the TSS as the minimum region that spans the TSSs of all selected transcripts.
+## Mapping Metrics
+
+### Confidently mapped read pairs
+
+Fraction of sequenced read pairs with mapping quality >30
+Here we are analyzing the quality of the sequenced reads that had been well mapped. 
+We expect to have a more than 80% of reads pair well mapped in each sample. All sample meet that threashold. 
+
+```{r}
+p  <- ggplot(data = data_mapping, aes(y=ATAC.Confidently.mapped.read.pairs, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle =45, vjust = 0.4, hjust=0.4))+ 
+  geom_text(aes(label = signif(ATAC.Confidently.mapped.read.pairs, 4)), color="black",size=geom.text.size) +
+  geom_hline(yintercept=0.8, linetype="dashed", color = "red", size=0.5)
+p 
+```
+
+### Non-nuclear read pairs
+
+Fraction of sequenced read pairs that have a valid barcode and map to non- nuclear genome contigs, including mitochondria,with mapping quality > 30
+we expect to have a low ratio of 10% of  non-nuclear read pair otherwise it means that there are a lot of mitochondrial DNA in the samples. 
+
+As we can see the ratio of non- nuclear read pair is extremely low which means that we have a ver high quality samples. 
+
+```{r}
+p  <- ggplot(data = data_mapping, aes(y=ATAC.Non.nuclear.read.pairs, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(ATAC.Non.nuclear.read.pairs, 4)), color="black") +geom_hline(yintercept=0.1, linetype="dashed", color = "red", size=0.5)
+p 
+```
+
+# Gene Expression RNA-seq
+
+## Sequencing Metrics
+
+### Sequenced read pairs
+
+Now we will see the total number of sequenced read pairs assigned to the Multiome 
+Gene Expression library. I should know the optima number of read pair from the
+tecnical note of the 
+
+
+```{r}
+ggplot(data = data_mapping, aes(y=GEX.Sequenced.read.pairs, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Sequenced.read.pairs)), color="black") +geom_hline(yintercept=0.1, linetype="dashed", color = "red", size=0.5)
+
+```
+### Valid barcodes
+
+Here we will see the read pair with barcode that match with the whitelist after error correction. We expect to find a higher values of 85% (red line dashed) . That means that the sample is high quality. 
+We can see that all sample are above the threshold of 85%, that means that we have a high ratio of cell with valid barcode in each sample. 
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+ggplot(data = data_mapping, aes(y=GEX.Valid.barcodes, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Valid.barcodes)), color="black") +geom_hline(yintercept=0.85, linetype="dashed", color = "red", size=0.5)
+```
+
+### Reads with TSO(check)
+
+Fraction of reads with an alignment score ≥20 for the template switch oligo (TSO) sequence
+
+The TSO (template switch oligo) is an oligo that hybridizes to untemplated C nucleotides added by the reverse transcriptase during reverse transcription. The TSO adds a common 5' sequence to full length cDNA that is used for downstream cDNA amplification.
+
+The TSO is used differently in the Single Cell 3' assay compared to the Single Cell 5' assay. In the 3' assay, the polyd(T) sequence is part of the gel bead oligo (which also contains the 10x Barcode, UMI, and partial Illumina Read 1 sequence), with the TSO supplied in the RT Primer. In the 5' assay, the polyd(T) is supplied in the RT Primer, and the TSO is part of the gel bead oligo.
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Reads.with.TSO, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Reads.with.TSO)), color="black") +geom_hline(yintercept=0.25, linetype="dashed", color = "red", size=0.5)
+```
+
+
+###Percent duplicates
+
+```{r}
+ggscatter(data_mapping,y="GEX.Sequenced.read.pairs", x="GEX.Percent.duplicates",
+          add.params = list( fill = "lightgray",color="steelblue"),
+          add="reg.line", 
+          conf.int = T,
+          cor.coef = T,
+          cor.coeff.args = list(method = "pearson", label.x = 0.5, label.sep = "\n"))
+```
+
+```{r}
+ggscatter(data_mapping,y="GEX.Total.genes.detected", x="GEX.Percent.duplicates",
+          add.params = list( fill = "lightgray",color="steelblue"),
+          add="reg.line", 
+          conf.int = T,
+          cor.coef = T,
+          cor.coeff.args = list(method = "pearson", label.x = 0.5, label.sep = "\n"))
+```
+ 
+## Cell metrics
+
+### GEX Mean raw read pairs per cell
+
+Here we can see the mean raw read pair per cell which is the  the total 
+number of sequenced read pairs divided by the number of cell barcodes.
+This metric is a function of the number of cell and sequencing depth. 
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Mean.raw.reads.per.cell, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Mean.raw.reads.per.cell,7)), color="black",size=geom.text.size) +
+  geom_hline(yintercept=5000, linetype="dashed", color = "red", size=0.5)
+```
+
+### GEX Median genes per cell
+
+This is the median number of genes detected per cell barcode.The expected value 
+depend on sample type complexity and sequencing depth. 
+As we can see all values are around 1300 and 2300, there are not much variability between them. 
+Do the samples with more genes have higher crhomatine accesibility? 
+
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Median.genes.per.cell, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle =45))+ 
+  geom_text(aes(label = signif(GEX.Median.genes.per.cell)), color="black") #+geom_hline(yintercept=100, linetype="dashed", color = "red", size=0.5)
+```
+
+The sample with higher mean read pair are the ones with more genes??
+
+
+### Compare mean raw read sequence pair with the media of genes
+
+
+We can see that there is a kind of correlation between mean of raw reads 
+per cell with median genes per cell
+It can suggest that the more average number of read the more genes we will find
+
+
+```{r}
+ggscatter(data_mapping,y="GEX.Mean.raw.reads.per.cell", x="GEX.Median.genes.per.cell",
+          add.params = list( fill = "lightgray",color="steelblue"),
+          add="reg.line", 
+          conf.int = T,
+          cor.coef = T,
+          cor.coeff.args = list(method = "pearson", label.x = 1500, label.sep = "\n"))
+```
+
+
+
+### GEX Median UMI count per cell
+Cells that are poor quality are likely to have low genes and UMIs per cell, and correspond to the data points in the bottom left quadrant of the plot.
+Good cells will generally exhibit both higher number of genes per cell and higher numbers of UMIs.
+
+
+The median number of UMI counts per cell barcode
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Median.UMI.counts.per.cell, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Median.UMI.counts.per.cell)), color="black") +geom_hline(yintercept=100, linetype="dashed", color = "red", size=0.5)
+```
+
+
+### Fraction of transcriptomic reads in cells
+
+Fraction of transcriptomic reads with a valid barcode that are associated with cell-containing partitions. Transcriptomic reads are defined as reads that map to a unique gene, including intronic alignments (default mode)
+
+Here we will se the fraction of transcriptomic sequenced reads with a valid barcode that  map to a unique gene. It is expected to be higher than 60% (red line). 
+As we can see all the sample pass that threshold. That means that almost all the transcriptomic reads have a valid barcode whcih is associated to a unique nuclei/cell. 
+
+```{r}
+p<- ggbarplot(data_mapping, 
+          x="library.name",
+          y="GEX.Fraction.of.transcriptomic.reads.in.cells",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE
+          )
+p+geom_hline(yintercept=0.6, linetype="dashed", color = "red", size=0.5)
+```
+
+### Total gene detected
+
+The number of genes with at least one UMI count in any cell barcode
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Total.genes.detected, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Total.genes.detected)), color="black") #+geom_hline(yintercept=0.8, linetype="dashed", color = "red", size=0.5)
+```
+
+
+## Mapping Metrics
+
+### Reads mapped to genome
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Reads.mapped.to.genome, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Reads.mapped.to.genome)), color="black") +geom_hline(yintercept=0.8, linetype="dashed", color = "red", size=0.5)
+```
+
+### Reads mapped confidently to intergenic regions
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Reads.mapped.confidently.to.intergenic.regions, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Reads.mapped.confidently.to.intergenic.regions)), color="black") +geom_hline(yintercept=0.3, linetype="dashed", color = "red", size=0.5)
+```
+
+### Reads mapped confidently to intronic regions
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Reads.mapped.confidently.to.intronic.regions, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Reads.mapped.confidently.to.intronic.regions)), color="black") +geom_hline(yintercept=0.3, linetype="dashed", color = "red", size=0.5)
+```
+
+
+### Reads mapped confidently to exonic regions
+
+
+```{r}
+par(mar=c(8,4,2,1))
+
+ggplot(data = data_mapping, aes(y=GEX.Reads.mapped.confidently.to.exonic.regions, x=library.name))  + 
+  geom_bar(stat="identity", fill="steelblue")+ 
+  theme(text = element_text(size=8), axis.text.x = element_text(angle = 45))+ 
+  geom_text(aes(label = signif(GEX.Reads.mapped.confidently.to.exonic.regions)), color="black") +geom_hline(yintercept=0.3, linetype="dashed", color = "red", size=0.5)
+```
+
+### Compare intergenic, intronic and exonic regions
+
+```{r}
+data.fraction.melted<-melt(data_mapping[,c("library.name","GEX.Reads.mapped.confidently.to.intergenic.regions","GEX.Reads.mapped.confidently.to.intronic.regions","GEX.Reads.mapped.confidently.to.exonic.regions")])
+data.fraction.melted$variable<- revalue(data.fraction.melted$variable,c( "GEX.Reads.mapped.confidently.to.intergenic.regions" = "intergenic",
+        "GEX.Reads.mapped.confidently.to.intronic.regions" = "intronic",
+        "GEX.Reads.mapped.confidently.to.exonic.regions" = "exonic"),
+        warn_missing = TRUE)
+
+ggviolin(
+  data.fraction.melted,
+  x="variable",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped confidently",
+  add = "jitter", shape = "variable",
+  show.legend = FALSE)
+```
+
+
+
