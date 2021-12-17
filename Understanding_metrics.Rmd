@@ -51,7 +51,7 @@ library(plyr)
 
 data_mapping<-read.csv("data/cellranger_mapping_metrics_multiome.csv")
 
-metadata_multiome<- read.csv("data/data/tonsil_atlas_metadata_multiome.csv")
+metadata_multiome<- read.csv("/data/tonsil_atlas_metadata_multiome.csv")
 
 ```
 
