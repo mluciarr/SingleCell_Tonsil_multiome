@@ -1,0 +1,451 @@
+---
+title: "Merging_data & matrix construction"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The objective of this notebook is to merge multiple Multiome Seurat objects
+combining the scRNA data and the unified peaks data. Also, we are going to create
+matrix files for scRNA and peak matrix
+
+# Pre-processing
+
+## Load packages
+
+```{r}
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(ggpubr)
+library(stringr)
+library(tidyverse)
+library(Matrix)
+library(devtools)
+library(sjmisc)
+library(stringr)
+set.seed(123)
+```
+
+# Set working directory
+
+```{r}
+path_to_object<-("/Users/mlromeror/Documents/multiome_tonsil_Lucia/results/R_objects/2.tonsil_multiome_filtered.rds")
+path_to_save <- ("/Users/mlromeror/Documents/multiome_tonsil_Lucia/results/R_objects/")
+
+```
+
+
+## Functions
+
+### Peak unify - ATAC
+
+Explained: https://github.com/ding-lab/ccRCC_snRNA_analysis/blob/1436760897a06cd682b1b20d97e79e31df500d14/snatac/merge_objects/merge_objects_786O_celllines_katmai.R
+
+
+#### Quantify peaks in each dataset 
+
+We can now create a matrix of peaks per cell for each sample using the FeatureMatrix function.
+in addtion we will  use the quantified matrices to create a Seurat object for each dataset, 
+storing the Fragment object for each dataset in the assay.
+
+**We don't filter cells like in the tutorial, because we use already filtered matrices.**
+
+
+```{r }
+peaks_quantification <- function(seurat_filtered, peaks = combined_peaks){ 
+  counts <- FeatureMatrix(
+    fragments = Fragments(seurat_filtered),
+    features = combined_peaks,
+    cells = colnames(seurat_filtered))
+  # create the seurat objects
+  seurat_filtered[["peaks"]] <- CreateChromatinAssay(
+    counts, 
+    genome = "hg38",
+    fragments = Fragments(seurat_filtered),
+    annotation = annotation)
+  
+  return(seurat_filtered)
+}
+
+peak_default_assay <- function(seurat_object){
+  DefaultAssay(seurat_object) <- "ATAC"
+  return(seurat_object)
+}
+
+remove_atac_assay <- function(seurat_object){
+  DefaultAssay(seurat_object) <- "peaks"
+  seurat_object@assays[["ATAC"]] <- NULL
+  
+  RenameAssays(object = seurat_object, peaks = 'ATAC')
+  return(seurat_object)
+}
+
+
+remove_peak_assay<- function(seurat_object){
+  DefaultAssay(seurat_object) <- "RNA"
+  seurat_object@assays[["peaks"]] <- NULL
+  return(seurat_object)
+}
+
+remove_RNA_assay<- function(seurat_object){
+
+  seurat_object@assays[["RNA"]] <- NULL
+  
+  return(seurat_object)
+}
+```
+
+## Split object 
+
+```{r}
+#split seurat objects, creating object_# for each library
+split_obj_function<- function(tonsil_filtered_RNA){
+  for (i in seq_along(tonsil_filtered_RNA)){
+                  object<-tonsil_filtered_RNA[[i]]
+                 print(assign(paste("object",i,sep='_'), object, envir=.GlobalEnv))
+  }
+}      
+```
+
+# Matrix maker
+
+```{r}
+matrix_function<-function(list_object){
+for (x in names(list_object)) {
+  rna_mat<-list_object[[x]][["RNA"]]@counts
+  peak_mat<-list_object[[x]][["peaks"]]@counts
+  path_to_subdir <- str_c(path_to_tmp_dir, x, sep = "")
+  dir.create(path_to_subdir, showWarnings = FALSE)
+  path_save_mat_rna <- str_c(path_to_subdir, "rna_matrix.mtx", sep = "/")
+  path_save_mat_peak <- str_c(path_to_subdir, "peak_matrix.mtx", sep = "/")
+  path_save_features <- str_c(path_to_subdir, "features.tsv", sep = "/")
+  path_save_cell_barcodes <- str_c(path_to_subdir, "barcodes.tsv", sep = "/")
+  writeMM(rna_mat, path_save_mat_rna)
+  writeMM(peak_mat, path_save_mat_peak)
+  write(x = rownames(list_object[[x]]), file = path_save_features)
+  write(x = colnames(list_object[[x]]), file = path_save_cell_barcodes)
+}
+}
+
+matrix_function_atac_rna<-function(list_object){
+  my_string <- deparse(substitute(list_object))    # Apply deparse & substitute
+  my_string 
+  
+for (x in names(list_object)) {
+  path_to_subdir <- str_c(path_to_tmp_dir, x, sep = "/")
+  dir.create(path_to_subdir, showWarnings = FALSE)
+  
+  if (str_contains(my_string,'atac',ignore.case = TRUE) == TRUE ){
+      matr<-list_object[[x]][["peaks"]]@counts
+      path_save_mat <- str_c(path_to_subdir, "atac_matrix.mtx", sep = "/")
+      
+  }
+  else{
+      matr<-list_object[[x]][["RNA"]]@counts
+      path_save_mat <- str_c(path_to_subdir, "rna_matrix.mtx", sep = "/")
+       
+  path_save_features <- str_c(path_to_subdir, "features.tsv", sep = "/")
+  path_save_cell_barcodes <- str_c(path_to_subdir, "barcodes.tsv", sep = "/")
+  write(x = rownames(list_object[[x]]), file = path_save_features)
+  write(x = colnames(list_object[[x]]), file = path_save_cell_barcodes)
+
+  }
+ 
+  writeMM(matr, path_save_mat)
+}
+}
+
+matrix_function_rna<-function(list_object){
+for (x in names(list_object)) {
+  rna_mat<-list_object[[x]][["RNA"]]@counts
+  path_to_subdir <- str_c(path_to_tmp_dir, x, sep = "")
+  dir.create(path_to_subdir, showWarnings = FALSE)
+  path_save_mat <- str_c(path_to_subdir, "matrix.mtx", sep = "/")
+  path_save_features <- str_c(path_to_subdir, "features.tsv", sep = "/")
+  path_save_cell_barcodes <- str_c(path_to_subdir, "barcodes.tsv", sep = "/")
+  writeMM(rna_mat, path_save_mat)
+  write(x = rownames(list_object[[x]]), file = path_save_features)
+  write(x = colnames(list_object[[x]]), file = path_save_cell_barcodes)
+}}
+```
+
+# Loading data
+
+```{r message=FALSE, warning=FALSE}
+filtered.data<-readRDS(path_to_object)
+```
+
+## Gene annotation
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86,standard.chromosomes = T)
+seqlevelsStyle(annotation) <- "UCSC"
+genome(annotation) <- "hg38"
+
+```
+
+
+# ATAC data
+
+## Creating a common peak set - Unified peaks
+
+If the peaks were identified independently in each experiment then they will 
+likely not overlap perfectly. We can merge peaks from all the datasets to create 
+a common peak set, and quantify this peak set in each experiment prior to merging the objects.
+
+Too obtain the best results we will use all peaks, 
+
+```{r}
+# Create a unified set of peaks
+filtered_data_peak <- lapply(filtered.data, peak_default_assay)
+combined_peaks <- UnifyPeaks(object.list = filtered_data_peak, mode = "reduce") 
+
+# Keeping only standard chromosomes
+combined_peaks <- keepStandardChromosomes(combined_peaks, pruning.mode = 'coarse')
+peakwidths <- width(combined_peaks)
+
+p<-ggviolin(peakwidths,add = "boxplot",fill = "gray") + scale_y_log10() + 
+  geom_hline(yintercept = c(10,20000), linetype='dashed', col = 'black')
+p
+
+#Keeping only those peak between 10000 and 20 widths
+combined_peaks <- combined_peaks[peakwidths < 20000 & peakwidths > 10]
+combined_peaks
+
+filtered_data_unified_peak <- lapply(filtered_data_peak, peaks_quantification)
+
+```
+
+
+# Merging RNA data
+
+**Removing ATAC assay to reduce the size of the final Seurat object**
+
+```{r}
+filtered_data_unified_peak <- lapply(filtered_data_unified_peak, remove_atac_assay )
+```
+*Remove peak assays*
+
+```{r}
+filtered_data_unified_peak_rna <- lapply(filtered_data_unified_peak, remove_peak_assay )
+
+```
+
+
+```{r}
+split_obj_function(filtered_data_unified_peak_rna)
+
+#Merging seurat objects
+
+merged_rna <- merge(object_1, y = list(object_2,object_3,object_4,object_5,object_6,object_7,object_8,object_9,object_10,object_11), 
+                add.cell.ids = c(names(filtered_data_unified_peak_rna)))
+rm(list=ls(pattern="object_"))
+```
+
+
+## Isolate BCll2 samples
+
+Now we will splipt the data by adults and the rest of samples because the adults samples (BCLL2)
+because according to the characteristic of this data have a different behaviour than the other which can cause a miss
+
+```{r}
+
+bcll_2_ids <- c("BCLL_2_T_3","BCLL_2_T_2","BCLL_2_T_1")
+filtered_data_bcll2<-filtered_data_unified_peak[c(bcll_2_ids)]
+filtered_data_non_bcll2<-filtered_data_unified_peak[!(names(filtered_data_unified_peak) %in% bcll_2_ids)]
+```
+
+
+**Delete atac and peak assays**
+
+```{r}
+
+#except BCLL2 samples
+filtered_data_non_bcll2_rna <- lapply(filtered_data_non_bcll2, remove_atac_assay )
+filtered_data_non_bcll2_rna <- lapply(filtered_data_non_bcll2_rna, remove_peak_assay )
+
+## BCLL2 samples
+filtered_data_bcll2_rna <- lapply(filtered_data_bcll2, remove_atac_assay )
+filtered_data_bcll2_rna <- lapply(filtered_data_bcll2_rna, remove_peak_assay )
+```
+
+### Merging non bcll2 samples 
+
+```{r}
+split_obj_function(filtered_data_non_bcll2_rna)
+
+merged_non_bcll2_rna<- merge(object_1, y = list(object_2,object_3,object_4,object_5,object_6,object_7,object_8), 
+                add.cell.ids = c(names(filtered_data_non_bcll2_rna) ))
+rm(list=ls(pattern="object_"))
+```
+
+### Merging bcll2 samples 
+
+```{r}
+split_obj_function(filtered_data_bcll2_rna)
+
+merged_bcll2_rna<- merge(object_1, y = list(object_2,object_3), 
+                add.cell.ids = c(names(filtered_data_bcll2_rna) ))
+rm(list=ls(pattern="object_"))
+```
+
+### List of merged objects
+
+```{r}
+merged_list_rna<-list("matrix_all"=merged_rna, 
+                  "matrix_with_BCLL_2"=merged_bcll2_rna, 
+                  "matrix_without_BCLL_2"= merged_non_bcll2_rna)
+
+```
+
+
+# Matrix contruction
+
+## Create matrices for each sample 
+
+```{r}
+
+#Matrices
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp"
+# create saving directory
+dir.create(path_to_tmp_dir, showWarnings = FALSE )
+#Matrices
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp/each_sample/"
+# create saving directory
+dir.create(path_to_tmp_dir, showWarnings = FALSE )
+
+#Matrices
+matrix_function(filtered_data_unified_peak)
+```
+
+## Create matrices for each merged object
+
+```{r}
+#Matrices
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp/merged/"
+# create saving directory
+dir.create(path_to_tmp_dir, showWarnings = FALSE )
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp/merged/"
+
+matrix_function_atac_rna(merged_list_rna)
+```
+
+
+
+# Merging ATAC
+
+## Remove RNA
+
+```{r}
+tonsil_unified_peaks_ATAC<- lapply(filtered_data_unified_peak, remove_RNA_assay)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+split_obj_function(tonsil_unified_peaks_ATAC)
+
+#Merging seurat objects
+
+merged_ATAC <- merge(object_1, y = list(object_2,object_3,object_4,object_5,object_6,object_7,object_8,object_9,object_10,object_11), 
+                add.cell.ids = c(names(tonsil_unified_peaks_ATAC)))
+rm(list=ls(pattern="object_"))
+```
+
+**Delete RNA assays**
+
+```{r}
+
+#except BCLL2 samples
+filtered_data_non_bcll2_atac <- lapply(filtered_data_non_bcll2, remove_RNA_assay )
+
+## BCLL2 samples
+filtered_data_bcll2_atac <- lapply(filtered_data_bcll2, remove_RNA_assay )
+```
+
+### Merging non bcll2 samples 
+
+```{r}
+
+split_obj_function(filtered_data_non_bcll2_atac)
+
+merged_non_bcll2_ATAC<- merge(object_1, y = list(object_2,object_3,object_4,object_5,object_6,object_7,object_8), 
+                add.cell.ids = c(names(filtered_data_non_bcll2_atac) ))
+rm(list=ls(pattern="object_"))
+```
+
+### Merging bcll2 samples 
+
+```{r message=FALSE, warning=FALSE}
+split_obj_function(filtered_data_bcll2_atac)
+
+merged_bcll2_ATAC<- merge(object_1, y = list(object_2,object_3), 
+                add.cell.ids = c(names(filtered_data_bcll2_atac) ))
+rm(list=ls(pattern="object_"))
+```
+
+### List of merged objects
+
+```{r}
+#Matrices
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp"
+# create saving directory
+dir.create(path_to_tmp_dir, showWarnings = FALSE )
+#Matrices
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp/merged/"
+# create saving directory
+dir.create(path_to_tmp_dir, showWarnings = FALSE )
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp/merged/atac"
+
+merged_list_atac<-list("matrix_all"=merged_ATAC, "matrix_with_BCLL_2"=merged_bcll2_ATAC, "matrix_without_BCLL_2"= merged_non_bcll2_ATAC)
+```
+
+
+# Matrix contruction
+
+## Joint RNA and ATAC assays
+
+```{r}
+merged_rna@assays$peaks<- merged_ATAC@assays$peaks
+
+merged<-merged_rna
+```
+
+
+## Create matrices for each sample 
+
+```{r}
+path_to_tmp_dir="/Users/mlromeror/Documents/multiome_tonsil_Lucia/2.doublet_detection/tmp/merged/"
+
+dir.create(path_to_tmp_dir, showWarnings = FALSE )
+
+matrix_function_atac_rna(merged_list_atac)
+```
+
+# Saving data
+
+```{r}
+saveRDS(tonsil_filtered_RNA,"results/R_objects/4.tonsil_filtered_RNA_assay.rds")
+saveRDS(filtered_data_unified_peak,"../results/R_objects/5.tonsil_filtered_data_unified_peak.rds")
+saveRDS(filtered_data_unified_peak_rna,"../results/R_objects/5.1.filtered_data_unified_peak_rna.rds")
+saveRDS(tonsil_unified_peaks_ATAC,"../results/R_objects/5.2.tonsil_filtered_data_unified_peak_atac.rds")
+saveRDS(merged,"../results/R_objects/6.tonsil_filtered_merged_all.rds")
+#saveRDS(merged_non_bcll2,"../results/R_objects/6.1.tonsil_filtered_merged_non_bcll2.rds")
+#saveRDS(merged_bcll2,"../results/R_objects/6.2.tonsil_filtered_merged_bcll2.rds")
+
+```
+

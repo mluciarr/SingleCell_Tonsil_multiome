@@ -1,0 +1,360 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Install
+
+```{r eval=FALSE, include=FALSE}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.14")
+BiocManager::install(c(
+  'AnnotationFilter',
+  'BiocGenerics',
+  'GenomeInfoDb',
+  'GenomicFeatures',
+  'GenomicRanges',
+  'IRanges',
+  'Rsamtools',
+  'S4Vectors',
+  'TFBSTools',
+  'ggbio',
+  'motifmatchr',
+  'AnnotationDbi')
+)
+if (!requireNamespace("devtools", quietly = TRUE))
+    install.packages("devtools")
+devtools::install_github("timoast/signac", ref = "develop")
+install.packages("pkgconfig")
+install.packages("ellipsis")
+install.packages("Signac")
+
+BiocManager::install("'BiocGenerics'")
+BiocManager::install("hdf5r")
+BiocInstaller::biocLite("GreenleafLab/chromVAR")
+
+
+BiocManager::install(c('BSgenome.Hsapiens.UCSC.hg38', 'EnsDb.Hsapiens.v86'))
+BiocManager::install(c('BSgenome.Hsapiens.UCSC.hg19', 'EnsDb.Hsapiens.v75'))
+```
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg19)
+#library(chromVAR)
+fragment.counts.sigs <- addGCBias(fragment.counts.sigs, 
+   genome = BSgenome.Hsapiens.UCSC.hg19)
+```
+
+## Load packages
+
+```{r include=FALSE}
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+library(patchwork)
+library(plyr)
+library(readr)
+library(dplyr)
+set.seed(1234)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+readRDS("data/R_objects/1.tonsil_multiome_QC.rds", refhook = NULL)
+```
+
+```{r eval=FALSE, include=FALSE}
+#cdm <- system("find . -name *.h5",perl=T
+
+samples.path <- data_frame(sample.path=list.files(path="data/Experiment",
+                      pattern="h5", recursive = T, full.names = TRUE))
+
+sample.name = gsub('^.', '', #sub(".*Experiment\\/(.*)\\/filtered_feature_bc_matrix.h5","\\1", sample.path, perl #= TRUE ))
+
+```
+```{r eval=FALSE, include=FALSE}
+#function that creates list of the sample path of the file h5
+make.sample.path <- function(pathh){
+  sample.path=list()
+  
+                sample.path <-list.files(path=pathh,
+                      pattern="h5", recursive = T, full.names = TRUE) 
+               
+                return(sample.path)
+        
+}
+#function that creates list of all the multiome h5 files read by Read10x for each sample 
+
+make.multiome.List <- function(path){
+  sample.name =list()
+  multiome_fun=list()
+                sample.path<- make.sample.path(path)
+                sample.name<- sub(".*Experiment\\/(.*)\\/filtered_feature_bc_matrix.h5","\\1", sample.path, perl = TRUE )
+                  for (i in seq_along(sample.path)){
+                  multiome_fun[[sample.name[i]]] = assign(sample.name[[i]], Read10X_h5(filename=sample.path[[i]]))
+                }
+                return(multiome_fun)}
+        
+#Create a multiome list of all the samples h5 files 
+
+#multiome<- make.multiome.List("data/Experiment")
+
+```
+
+##try
+```{r eval=FALSE, include=FALSE}
+
+sample.path <-list.files(path="data/Experiment",
+                      pattern="h5", recursive = T, full.names = TRUE)
+sample.name<- sub(".*Experiment\\/(.*)\\/filtered_feature_bc_matrix.h5","\\1", sample.path, perl = TRUE )
+
+##loop function
+
+multiome = list()
+for (i in seq_along(sample.path)){
+  multiome[[sample.name[i]]] = assign(sample.name[[i]], Read10X_h5(filename=sample.path[[i]]), envir = .GlobalEnv)
+}
+
+
+
+#create a data frame
+df <- data.frame(sample.path, sample.name)
+names(df) <- c("sample_path", "sample_name")
+print(df)
+
+
+samples.path.name %>%
+  head(3)
+df$sample_path
+```
+
+
+# Trying to integrate everything
+
+```{r message=FALSE, warning=FALSE}
+#function that creates list of the sample path of the file h5
+make.sample.path <- function(pathh){
+  sample.path=list()
+  
+                sample.path <-list.files(path=pathh,
+                      pattern="h5", recursive = T, full.names = TRUE) 
+               
+                return(sample.path)
+        
+}
+
+make.fragpath <- function(pathh){
+  sample.path<-list()
+  
+                sample.path <-list.files(path=pathh,
+                      pattern=".tsv.gz$", recursive = T, full.names = TRUE) 
+               
+                return(sample.path)
+        
+}
+#function that creates list of all the multiome h5 files read by Read10x for each sample 
+
+make.multiome.Listas <- function(path){
+  sample.name <-list()
+   sample.pathList <-list()
+   pbmc_list <-list()
+   fragpathList<-list()
+  # get gene annotations for hg38
+
+  
+                sample.pathList<- make.sample.path(path)
+                fragpathList<- make.fragpath(path)
+                sample.name<- sub(".*Experiment\\/(.*)\\/filtered_feature_bc_matrix.h5","\\1", sample.pathList, perl = TRUE )
+                 annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+                 seqlevelsStyle(annotation) <- "UCSC"
+                 genome(annotation) <- "hg38"
+                 
+                  for (i in seq_along(sample.pathList)){
+                  counts = Read10X_h5(filename=sample.pathList[[i]])
+                  fragpath <-fragpathList[[i]]
+                  #print(fragpath)
+                  pbmc<-CreateSeuratObject(counts = counts$`Gene Expression`, assay = "RNA")
+                  pbmc[["ATAC"]] <- CreateChromatinAssay(
+  counts = counts$Peaks,
+  sep = c(":", "-"),
+  fragments = fragpath,
+  annotation = annotation
+)
+                  pbmc_list[[sample.name[i]]] = assign(sample.name[[i]], pbmc, envir=.GlobalEnv)
+                 } 
+                 return(pbmc_list)
+    }
+  
+        
+#Create a multiome list of all the Seurat Object with Signac Cromatine assay
+
+m<- make.multiome.Listas("data/Experiment")
+
+```
+
+
+## Quality control 
+
+```{r}
+VlPlot_Filtering <- function(path,multiomeList){
+  sample.pathList<- make.sample.path(path)
+sample.nameList<- sub(".*Experiment/1\\/(.*)\\/filtered_feature_bc_matrix.h5","\\1", sample.pathList, perl = TRUE )
+  j=1
+  pbmc_list <-list()
+  for (i in multiomeList){ #for each object in the multiome List. 
+  
+  DefaultAssay(i) <- "ATAC"
+
+i <- NucleosomeSignal(i)
+i <- TSSEnrichment(i)
+
+print(VlnPlot(
+  object = i,
+  features = c("nCount_RNA", "nCount_ATAC", "TSS.enrichment", "nucleosome_signal"),
+  ncol = 4,
+  pt.size = 0))
+
+#filter low quality cells
+#i <- subset(
+ # x = i,
+ # subset = nCount_ATAC < 80000 &
+ #   nCount_RNA < 25000 &
+  #  nCount_ATAC > 0 &
+   # nCount_RNA > 1000 &
+    #nucleosome_signal < 1.1 &
+    #TSS.enrichment > 2)
+
+pbmc_list[[sample.nameList[j]]] = assign(sample.nameList[[j]], i, envir=.GlobalEnv)
+
+j=j+1
+                 } 
+                 return(pbmc_list)
+
+
+}
+
+```
+
+```{r}
+#filter low quality cells
+i <- subset(
+  x = i,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 25000 &
+    nCount_ATAC > 1000 &
+    nCount_RNA > 1000 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1
+)
+
+
+
+pbmc<-VlPlot_Filtering(m)
+print(pbmc)
+
+```
+
+
+
+```{r warning=FALSE}
+
+#List of all the fragment path of each sample 
+
+SeuratObjetList<- function(path){
+  fragpath <-list.files(path=path,
+                      pattern=".tsv.gz$", recursive = T, full.names = TRUE)
+  #list of all the sample names
+  sample.name<- sub(".*Experiment\\/(.*)\\/filtered_feature_bc_matrix.h5","\\1", fragpath, perl = TRUE )
+
+  # get gene annotations for hg38
+  annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+  seqlevelsStyle(annotation) <- "UCSC"
+  genome(annotation) <- "hg38"
+
+# create a Seurat object containing the RNA adata
+  
+multiome = make.multiome.List(path)
+
+pbmc_SeuratObjects = lapply(multiome, function(x) CreateSeuratObject(counts = x$`Gene Expression`,  assay= "RNA"))
+return(pbmc_SeuratObjects)
+}
+
+pbmc_SeuratObjects<-SeuratObjetList("data/Experiment")
+
+
+
+
+# load the RNA and ATAC data
+
+#counts_qmzb59ew_t11l8dzm <- Read10X_h5(filename = "data/Experiments/filtered_feature_bc_matrix.h5")
+
+# create ATAC assay and add it to the object
+pbmc[["ATAC"]] <- CreateChromatinAssay(
+  counts = counts$Peaks,
+  sep = c(":", "-"),
+  fragments = fragpath,
+  annotation = annotation
+)
+
+for (i in seq_along(pbmc_SeuratObjects)){
+  pbmc_SeuratObjects[[i]["ATAC"]]<- assign(pbmc_SeuratObjects[["ATAC"]], 
+                                                CreateChromatinAssay(counts = multiome[[i]]$Peaks,
+                                                                     sep = c(":", "-"),
+                                                                     fragments = fragpath[[i]],
+                                                                     annotation = annotation), envir = .GlobalEnv
+  )
+}
+
+pbmc
+```
+
+## Quality control 
+
+```{r}
+pbmc2<-pbmc$co7dzuup_xuczw9vc
+DefaultAssay(pbmc2) <- "ATAC"
+
+pbmc2 <- NucleosomeSignal(pbmc2)
+pbmc2 <- TSSEnrichment(pbmc2)
+
+VlnPlot(
+  object = pbmc2,
+  features = c("nCount_RNA", "nCount_ATAC", "TSS.enrichment", "nucleosome_signal"),
+  ncol = 4,
+  pt.size = 0
+)
+```
+
+
+```{r}
+# filter out low quality cells
+pbmc2 <- subset(
+  x = pbmc2,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 25000 &
+    nCount_ATAC > 1000 &
+    nCount_RNA > 1000 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1
+)
+pbmc2
+```
+
+```{r}
+data_path <- file.path(Sys.getenv("data/co7dzuup_xuczw9vc"), "data/co7dzuup_xuczw9vc")
+save_path <- file.path(Sys.getenv("data/co7dzuup_xuczw9vc/"), "seu")
+data_path
+save_path
+dataset <- "filtered_feature_bc_matrix"
+
+```
+
+
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

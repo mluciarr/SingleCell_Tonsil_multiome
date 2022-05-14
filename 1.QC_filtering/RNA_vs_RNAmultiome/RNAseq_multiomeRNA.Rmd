@@ -1,0 +1,312 @@
+---
+title: "scRNA"
+author: "Maria Lucia Romero"
+date: "11/25/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+library(dplyr)
+library(reshape2)
+library(kableExtra)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(corrplot)
+library(RColorBrewer)
+library(plyr)
+
+```
+
+```{r eval=FALSE, message=FALSE, include=FALSE}
+setwd("/Users/mlromeror/Documents/IDIBAPS_internship/data/")
+```
+
+# Loading data
+
+```{r message=FALSE}
+
+RNAseq.data.mapping<-read.csv("/Users/mlromeror/Documents/Sample co7dzuup_xuczw9vc/data/data/cellranger_mapping_metrics_hashed.csv")
+Multiome.RNAseq.data.mapping<-read.csv("/Users/mlromeror/Documents/Sample co7dzuup_xuczw9vc/data/data/cellranger_mapping_metrics_multiome.csv")
+
+```
+
+
+```{r include=FALSE}
+#add a column of methods
+RNAseq.data.mapping$method<-"scRNAseq"
+Multiome.RNAseq.data.mapping$method<-"Multiome"
+
+```
+
+# RNAseq Mapping data Table 
+
+
+```{r echo=FALSE}
+knitr::kable(RNAseq.data.mapping, caption = "Visualization of mapping data",row.names = T) %>%
+  kable_styling(
+    bootstrap_options=c("bordered")) %>%
+  scroll_box(height = "500px")
+```
+
+
+# Multiome Mapping data table 
+
+```{r echo=FALSE}
+knitr::kable(Multiome.RNAseq.data.mapping, caption = "Visualization of mapping data",row.names = T) %>%
+  kable_styling(
+    bootstrap_options=c("bordered")) %>%
+  scroll_box(height = "500px")
+```
+
+
+## Fraction of read in cell RNA seq and Fraction transcriptomic Reads in Cells in GEX multiome
+
+Fraction of read in cell contain a valid barcode, are confidently mapped to the
+transcriptome and are associated with a barcode that is called as a cell. it is 
+expected to have more than 70%.
+We can see that all sample are above the thresold. 
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+p<- ggbarplot(RNAseq.data.mapping, 
+          x="gem_id",
+           y="Fraction.Reads.in.Cells",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Fraction of read in cell RNA seq"
+          )
+p+font("title", size = 12, face = "bold.italic") +
+  geom_hline(yintercept=70,linetype="dashed", color = "red")
+```
+
+
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+
+p<- ggbarplot(Multiome.RNAseq.data.mapping, 
+          x="Sample.ID",
+          y="GEX.Fraction.of.transcriptomic.reads.in.cells",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "GEX Fraction transcriptomic Reads in Cells"
+          )
+p+font("title", size = 12, face = "bold.italic")
+```
+
+
+## Read Mapped to Genome
+
+Here, we want to take at look at how the fraction of reads mapped to genome
+behave in both methods. 
+
+We can observe that the values of Read mapped to the genome in RNA-seq vary much 
+more than in Multiome GEX. Therefore we want to see if this is happened in the 
+intergenic, intronic, exonic regions as well. 
+
+### RNA-seq
+
+```{r}
+par(mar=c(8,4,2,2),mgp=c(3, 1, 0))
+p<- ggbarplot(RNAseq.data.mapping, 
+          x="gem_id",
+           y="Reads.Mapped.to.Genome",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Reads Mapped to Genome RNAseq"
+          )
+p+font("title", size = 12, face = "bold.italic")
+```
+
+### GEX multiome
+
+
+```{r}
+p<- ggbarplot(Multiome.RNAseq.data.mapping, 
+          x="Sample.ID",
+           y="GEX.Reads.mapped.to.genome",
+          fill="steelblue",
+          lab.col = "black", 
+          lab.pos = "out",
+          lab.size = 3,
+          ggtheme = theme_pubr(x.text.angle = 45),
+          label = TRUE,
+          title = "Reads Mapped to Genome GEX multiome"
+          )
+p+font("title", size = 12, face = "bold.italic")
+```
+
+
+# Compare Fraction of reads mapped between RNA-seq and Multiome GEX
+
+Now we compare the fraction of mapped reads to genome and the fraction of coffidently 
+mapped to genone and mapped to intergenic, intronic and exonic regions between RNA-seq and multiome methods.
+
+
+```{r}
+RNAseq.data.fraction.melted<-melt (RNAseq.data.mapping[, 
+                        c("gem_id", 
+                                             "Reads.Mapped.to.Genome",
+                                             "Reads.Mapped.Confidently.to.Genome",
+                                             "Reads.Mapped.Confidently.to.Intergenic.Regions",
+                                             "Reads.Mapped.Confidently.to.Intronic.Regions",
+                                             "Reads.Mapped.Confidently.to.Exonic.Regions")],id.var="gem_id")
+
+RNAseq.data.fraction.melted$variable<- revalue(RNAseq.data.fraction.melted$variable,
+                                        c( "Reads.Mapped.to.Genome"="Map.genome", 
+                                           "Reads.Mapped.Confidently.to.Genome" = "Conf.map.genome",
+                                           "Reads.Mapped.Confidently.to.Intergenic.Regions"="Intergenic",
+                                           "Reads.Mapped.Confidently.to.Intronic.Regions" = "Intronic",
+        "Reads.Mapped.Confidently.to.Exonic.Regions" = "Exonic"),
+        warn_missing = TRUE)
+
+
+RNAseq.data.fraction.melted$value<-as.numeric(sub("%","",RNAseq.data.fraction.melted$value))/100
+
+ggviolin(
+  RNAseq.data.fraction.melted,
+  x="variable",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  add = "jitter")
+```
+
+```{r}
+Multiome.data.fraction.melted<-melt(Multiome.RNAseq.data.mapping[,c("Sample.ID","GEX.Reads.mapped.to.genome","GEX.Reads.mapped.confidently.to.genome","GEX.Reads.mapped.confidently.to.intergenic.regions","GEX.Reads.mapped.confidently.to.intronic.regions","GEX.Reads.mapped.confidently.to.exonic.regions")],id.vars = "Sample.ID")
+Multiome.data.fraction.melted$variable<- revalue(Multiome.data.fraction.melted$variable,
+                                                 c("GEX.Reads.mapped.to.genome"="Map.Genome", 
+                                                   "GEX.Reads.mapped.confidently.to.genome"="Conf.map.Genome",
+                                                   "GEX.Reads.mapped.confidently.to.intergenic.regions" = "Intergenic",
+        "GEX.Reads.mapped.confidently.to.intronic.regions" = "Intronic",
+        "GEX.Reads.mapped.confidently.to.exonic.regions" = "Exonic"),
+        warn_missing = TRUE)
+
+ggviolin(
+  Multiome.data.fraction.melted,
+  x="variable",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped confidently",
+  add = "jitter")
+```
+
+
+## Comparing RNA-seq and multiome reads mapped to genome
+
+Now we will plot the two methods in the same violin plot to see how the data behaves for both methods. 
+We can easily see that the distribution of the data is not significantly different. 
+Each variable in the RNA-seq method has similar values compared to the GEX values in the multiome method. 
+
+However, as we mentioned earlier, the data from the RNA-seq method seems to have more variability than that of the multiome GEX.
+This could be because there are more samples in the RNA-seq and it is more likely to find differences between samples, or it could be related to the methodology. 
+
+The proportion of reads assigned to the exotic and intronic regions of the sample from the RNA-seq shows greater variability than in the multiome
+
+```{r}
+RNAseq.data.fraction.melted.2<-melt (RNAseq.data.mapping[, 
+                        c("method", 
+                                             "Reads.Mapped.to.Genome",
+                                             "Reads.Mapped.Confidently.to.Genome",
+                                             "Reads.Mapped.Confidently.to.Intergenic.Regions",
+                                             "Reads.Mapped.Confidently.to.Intronic.Regions",
+                                             "Reads.Mapped.Confidently.to.Exonic.Regions")],id.var="method")
+
+RNAseq.data.fraction.melted.2$variable<- revalue(RNAseq.data.fraction.melted.2$variable,
+                                        c( "Reads.Mapped.to.Genome"="Map.genome", 
+                                           "Reads.Mapped.Confidently.to.Genome" = "Conf.map.genome",
+                                           "Reads.Mapped.Confidently.to.Intergenic.Regions"="Intergenic",
+                                           "Reads.Mapped.Confidently.to.Intronic.Regions" = "Intronic",
+        "Reads.Mapped.Confidently.to.Exonic.Regions" = "Exonic"),
+        warn_missing = TRUE)
+
+
+RNAseq.data.fraction.melted.2$value<-as.numeric(sub("%","",RNAseq.data.fraction.melted.2$value))/100
+
+# multiome melt
+
+Multiome.data.fraction.melted.2<-melt(Multiome.RNAseq.data.mapping[,c("method","GEX.Reads.mapped.to.genome","GEX.Reads.mapped.confidently.to.genome","GEX.Reads.mapped.confidently.to.intergenic.regions","GEX.Reads.mapped.confidently.to.intronic.regions","GEX.Reads.mapped.confidently.to.exonic.regions")],id.vars = "method")
+
+Multiome.data.fraction.melted.2$variable<- revalue(Multiome.data.fraction.melted.2$variable,
+                                                 c("GEX.Reads.mapped.to.genome"="Map.genome", 
+                                                   "GEX.Reads.mapped.confidently.to.genome"="Conf.map.genome",
+                                                   "GEX.Reads.mapped.confidently.to.intergenic.regions" = "Intergenic",
+        "GEX.Reads.mapped.confidently.to.intronic.regions" = "Intronic",
+        "GEX.Reads.mapped.confidently.to.exonic.regions" = "Exonic"),
+        warn_missing = TRUE)
+ALL.data<- merge(RNAseq.data.fraction.melted.2,Multiome.data.fraction.melted.2,all = TRUE)
+
+ggviolin(
+  ALL.data,
+  x="variable",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  add = "jitter",
+  color = "method")
+```
+
+#### Comparing Read mapped antisense to gene in RNA-seq and Multiome GEX
+
+Here we compare the proportion of reads mapped antisense to gene in RNA-seq and Multiome GEX in a separate violin plot, as the values in RNA-seq were significantly lower than the other variables and it was difficult to see them all in the same plot.
+
+In this case, the data between Multiome and RNA-seq are very different. We can see that we can capture a higher percentage of reads mapped to antisense RNA using the Multiome method than using the RNA-seq method.
+
+Also, it is shows that the variablity of the results in multiome is higher in this case. 
+Whereas, in RNA-seq the fraction is very uniform we find all of them around 2 % and 3%.
+
+
+```{r}
+RNAseq.data.fraction.melted.3<-melt (RNAseq.data.mapping[, 
+                        c("method", 
+                                             "Reads.Mapped.Antisense.to.Gene")],id.var="method")
+
+RNAseq.data.fraction.melted.3$variable<- revalue(RNAseq.data.fraction.melted.3$variable,
+                                        c( "Reads.Mapped.Antisense.to.Gene"="Map antisense"
+                                           ),
+        warn_missing = TRUE)
+
+
+RNAseq.data.fraction.melted.3$value<-as.numeric(sub("%","",RNAseq.data.fraction.melted.3$value))/100
+
+# multiome melt
+
+Multiome.data.fraction.melted.3<-melt(Multiome.RNAseq.data.mapping[,c("method","GEX.Reads.mapped.antisense.to.gene")],id.vars = "method")
+
+Multiome.data.fraction.melted.3$variable<- revalue(Multiome.data.fraction.melted.3$variable,
+                                                 c("GEX.Reads.mapped.antisense.to.gene"="Map antisense" 
+                                                   ),
+        warn_missing = TRUE)
+ALL.data.2<- merge(RNAseq.data.fraction.melted.3,Multiome.data.fraction.melted.3,all = TRUE)
+
+ggviolin(
+  ALL.data.2,
+  x="variable",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  add = "jitter",
+  color = "method")
+```
+
+
