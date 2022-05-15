@@ -1,0 +1,465 @@
+---
+title: "8-Deleting T-cells, normalization and integration wnn (Save 13)"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load packages
+
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(Signac)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(magick)
+library(knitr) 
+library(kableExtra)
+library(devtools)
+library(harmony)
+library(patchwork)
+library(kableExtra)
+set.seed(123)
+
+
+```
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/12.tonsil_multiome_without_cluster7_doublets_normalized.rds")
+path_to_save <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/13.tonsil_multiome_bcells_without_doublets_normalized.rds")
+
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_bcell <- readRDS(path_to_obj)
+```
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn_bcell@meta.data), "wsnn_res.0.075")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn_bcell,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+## Filtering  T-cells
+
+```{r}
+tonsil_wnn_bcell<-FindSubCluster(
+  tonsil_wnn_bcell,
+  2,
+  graph.name="wsnn",
+  subcluster.name = "sub.cluster2",
+  resolution = 0.05,
+  algorithm = 1
+)
+```
+
+## Dimentional plot
+
+```{r}
+vars <- str_subset(colnames(tonsil_wnn_bcell@meta.data), "^sub.cluster")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn_bcell,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p
+})
+clusters_gg 
+```
+
+```{r echo=TRUE}
+tonsil_wnn_bcell$is_tcell <- 
+  tonsil_wnn_bcell$wsnn_res.0.075 == "1" |
+   tonsil_wnn_bcell$wsnn_res.0.075 == "4" |
+   tonsil_wnn_bcell$wsnn_res.0.075 == "6" |
+     tonsil_wnn_bcell$wsnn_res.0.075 == "7" 
+
+tonsil_wnn_bcell <- subset(tonsil_wnn_bcell, subset = is_tcell == FALSE)
+
+
+```
+
+```{r echo=TRUE}
+DimPlot(tonsil_wnn_bcell, reduction = "wnn.umap", group.by = "wsnn_res.0.075", label = TRUE, pt.size = 0.1)
+```
+
+
+
+## scATAC
+
+### Normalization and linear dimensional reduction
+
+ We exclude the first dimension as this is typically correlated with sequencing depth
+Cells cluster completely separately in ATAC without harmony; so run harmony after SVD
+
+RunSVD LSI
+```{r}
+DefaultAssay(tonsil_wnn_bcell) <- "peaks"
+tonsil_wnn_bcell <- RunTFIDF(tonsil_wnn_bcell)
+tonsil_wnn_bcell <- FindTopFeatures(tonsil_wnn_bcell, min.cutoff = "q0")
+tonsil_wnn_bcell <- RunSVD(tonsil_wnn_bcell)
+```
+
+
+
+### Plot the Depth correlation plot
+
+Compute the correlation between total counts and each reduced dimension component.
+
+
+LSI component is typically highly correlated with sequencing depth. 
+The first LSI component often captures sequencing depth (technical variation) rather 
+than biological variation. If this is the case, the component should be removed from 
+downstream analysis. We can assess the correlation between each LSI component and 
+sequencing depth using the DepthCor() function:
+
+For scRNA-seq data we don't typically observe such a strong relationship between the first PC and sequencing depth, and so usually retain the first PC in downstream analyses.
+
+```{r fig.wide=TRUE}
+
+DepthCor(tonsil_wnn_bcell)
+
+```
+
+Here we see there is a very strong correlation between the first LSI component and the total 
+number of counts for the cell, so we will perform downstream steps without this component.
+
+
+### UMAP representation
+
+* dimensional reduction key, specifies the string before the number for the dimension names. UMAP by default
+* reduction.name: Name to store dimensional reduction under in the Seurat object
+
+
+```{r fig.wide=TRUE}
+tonsil_wnn_bcell <- RunUMAP(
+  tonsil_wnn_bcell,
+  dims = 2:40,
+  reduction = "lsi",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+atac.umap<-DimPlot(
+  tonsil_wnn_bcell,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + ggtitle('scATAC UMAP') + NoLegend()
+
+atac.umap
+
+#split_by: library ,edad, genero
+```
+
+
+
+
+
+## scRNA
+
+### Normalization and linear dimensional reduction- 
+
+### NormalizeData
+
+```{r message=FALSE, warning=FALSE}
+DefaultAssay(tonsil_wnn_bcell) <- "RNA"
+tonsil_wnn_bcell <- NormalizeData(
+  tonsil_wnn_bcell,
+  normalization.method = "LogNormalize",
+  scale.factor = 1e4
+)
+
+tonsil_wnn_bcell <- tonsil_wnn_bcell %>%
+  FindVariableFeatures(nfeatures = 3000) %>%
+  ScaleData() %>% 
+  RunPCA() 
+```
+
+
+
+```{r}
+PCAPlot(tonsil_wnn_bcell,
+  group.by = "library_name")
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+PrintPCA(object = tonsil_wnn_bcell, pcs.print = 1:5, genes.print = 5, use.full = FALSE)
+PCHeatmap(object = tonsil_wnn_bcell)
+```
+
+```{r}
+ElbowPlot(object = tonsil_wnn_bcell)
+```
+
+
+find variable genes
+
+### UMAP representation
+
+```{r}
+tonsil_wnn_bcell <- RunUMAP(
+  tonsil_wnn_bcell,
+  dims = 1:30,
+  reduction = "pca",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+rna.umap<-DimPlot(
+  tonsil_wnn_bcell,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1) + NoLegend() + ggtitle('scRNA UMAP')
+
+rna.umap
+```
+
+
+```{r}
+atac.umap + rna.umap
+```
+
+
+hacer primero harmony, quitar batch effect. 
+atac y rna. harmony
+
+# Run Harmony 
+
+Pass the Seurat object to the RunHarmony function and specify which variable to integrate 
+out. A Seurat object is returned with corrected Harmony coordinates.
+
+## scATAC
+
+```{r}
+DefaultAssay(tonsil_wnn_bcell) <- "peaks"
+tonsil_wnn_bcell <- RunHarmony(
+  object = tonsil_wnn_bcell,
+  reduction = "lsi",
+  dims = 2:40,
+  group.by.vars = "library_name",
+  assay.use = "peaks",
+  project.dim = FALSE,
+  reduction.save = "harmony_peaks"
+)
+```
+
+
+### UMAP representation
+
+```{r}
+tonsil_wnn_bcell <- RunUMAP(
+  tonsil_wnn_bcell,
+  dims = 2:40,
+  reduction = "harmony_peaks",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+
+Harm_peak<-DimPlot(
+  tonsil_wnn_bcell,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('Peak Harmony')
+```
+
+# scRNA
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+DefaultAssay(tonsil_wnn_bcell) <- "RNA"
+tonsil_wnn_bcell <- RunHarmony(
+  object = tonsil_wnn_bcell,
+  reduction = "pca",
+  dims = 1:30,
+  group.by.vars = "library_name",
+  assay.use = "RNA",
+  project.dim = FALSE,
+  reduction.save = "harmony_rna"
+)
+```
+
+```{r}
+tonsil_wnn_bcell <- RunUMAP(
+  tonsil_wnn_bcell,
+  dims = 2:40,
+  reduction = "harmony_rna",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+Harm_rna<-DimPlot(
+  tonsil_wnn_bcell,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('RNA Harmony')
+```
+
+## scATAC and RNAseq Harmony
+
+```{r}
+Harm_peak+Harm_rna 
+```
+
+
+## Joint UMAP visualization
+
+**FindNeighbors**
+
+Constructs a Shared Nearest Neighbor (SNN) Graph for a given dataset. We first 
+determine the k-nearest neighbors of each cell. We use this knn graph to construct 
+the SNN graph by calculating the neighborhood overlap (Jaccard index) between 
+every cell and its k.param nearest neighbors.
+
+```{r}
+# build a joint neighbor graph using both assays
+tonsil_wnn_bcell <- FindMultiModalNeighbors(
+  object = tonsil_wnn_bcell,
+  reduction.list = list("harmony_peaks", "harmony_rna"),
+  dims.list = list(2:40, 1:30), modality.weight.name = "Joint_snn_umap"
+  )
+
+# build a joint UMAP visualization
+
+tonsil_wnn_bcell <- RunUMAP(
+  object = tonsil_wnn_bcell,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_")
+```
+
+```{r}
+joint.umap<- DimPlot(tonsil_wnn_bcell, label = FALSE, group.by = "library_name", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP')+ ggtitle('Joint UMAP by library name') + NoLegend()
+
+joint.umap
+```
+
+
+```{r}
+joint.umap_age<- DimPlot(tonsil_wnn_bcell, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_hospital<- DimPlot(tonsil_wnn_bcell, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+## FindClusters
+
+```{r}
+#find cluster algorithm 3 = SLM algorithm
+
+tonsil_wnn_bcell <- FindClusters(tonsil_wnn_bcell, resolution = c(0.01,0.05,0.075,0.1),algorithm = 3, graph.name = "wsnn",verbose = FALSE)
+print(colnames(tonsil_wnn_bcell@meta.data))
+```
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn_bcell@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn_bcell,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+
+```{r}
+Idents(tonsil_wnn_bcell)<-"wsnn_res.0.075"
+tonsil_markers_075<-FindAllMarkers(object = tonsil_wnn_bcell, only.pos = TRUE)
+write.csv(tonsil_markers_075,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "tonsil_markers_bcell_075.csv"))
+```
+
+### Get top n for each cluster
+
+**Resolution 0.075**
+ 
+```{r}
+tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC) %>% write.csv(.,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "top10_tonsil_markers_bcell_075.csv"))
+
+tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC) %>% write.csv(.,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "top5_tonsil_markers_bcell_075.csv"))
+
+
+top5_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+top10_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+```
+
+```{r}
+df_top5<-as.data.frame(top5_tonsil_markers_075)
+kbl(df_top5,caption = "Table of the top 5 marker of each cluster resolution 0.005") %>%
+  kable_paper("striped", full_width = F)
+```
+
+
+
+# CellCycleScoring
+
+
+
+PCNA: Proliferating cell nuclear antigen
+
+```{r}
+# Visualize the distribution of cell cycle markers across
+RidgePlot(tonsil_wnn_bcell, features = c("PCNA", "TOP2A", "MCM6", "MKI67"), ncol = 2)
+```
+
+```{r}
+DimPlot(tonsil_wnn_bcell,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T, group.by = "Phase")
+```
+
+```{r}
+DimPlot(tonsil_wnn_bcell,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T)
+```
+
+
+
+# Save
+
+```{r}
+saveRDS(tonsil_wnn_bcell, path_to_save)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

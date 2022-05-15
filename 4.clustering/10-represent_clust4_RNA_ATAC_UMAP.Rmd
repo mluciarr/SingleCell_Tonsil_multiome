@@ -1,0 +1,548 @@
+---
+title: "Represent cluster 4 in RNA and ATAC all data UMAP"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load package
+
+
+```{r message=FALSE, warning=FALSE}
+library("RColorBrewer")
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+#library(SeuratWrappers)
+library(harmony)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(kableExtra)
+library(tidyverse)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+set.seed(123)
+```
+
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/13.tonsil_multiome_bcells_without_doublets_normalized.rds")
+path_to_obj_all_data<- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/12.tonsil_multiome_without_cluster7_doublets_normalized.rds")
+path_to_markers<-("~/Documents/multiome_tonsil_Lucia/results/tables/tonsil_markers_bcell_075.csv")
+
+
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_bcell <- readRDS(path_to_obj)
+tonsil_wnn<-readRDS(path_to_obj_all_data)
+tonsil_markers_075<-read_csv(path_to_markers)
+
+```
+
+# UMAP 
+
+```{r}
+ DimPlot(
+    tonsil_wnn_bcell,
+    group.by = "wsnn_res.0.075",
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+```
+```{r }
+new.cluster.ids <- c("MBC", "NBC","GC/DZ", "GC/LZ", "GC/PC", "PC")
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell)
+tonsil_wnn_bcell <- RenameIdents(tonsil_wnn_bcell, new.cluster.ids)
+DimPlot(tonsil_wnn_bcell, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+## Weights
+
+```{r}
+weight.vp<- VlnPlot(tonsil_wnn_bcell, features = "RNA.weight",pt.size = 0)
+p.weight.vp<- VlnPlot(tonsil_wnn_bcell, features = "peaks.weight",pt.size = 0)
+
+weight.vp + ggtitle("RNA modality weight")+NoLegend()
+p.weight.vp+ggtitle("ATAC modality weight")+NoLegend()
+```
+
+```{r}
+weight<-as.data.frame(tonsil_wnn_bcell[[c("RNA.weight","peaks.weight","wsnn_res.0.075")]])
+
+weight.melted<-melt(weight)
+
+ggviolin(
+  weight.melted,
+  x="wsnn_res.0.075",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  color = "variable")
+
+```
+```{r}
+figure <- ggplot(weight.melted, aes(x = wsnn_res.0.075, y = value, fill = variable)) + geom_violin() + 
+  labs(x="clusters", y="Weights")
+figure
+```
+
+```{r echo=TRUE}
+tonsil_wnn_bcell$is_cluster4 <- 
+  tonsil_wnn_bcell$wsnn_res.0.075 == "4" 
+
+tonsil_wnn_cluster4 <- subset(tonsil_wnn_bcell, subset = is_cluster4 == TRUE)
+
+barcode_cluster4<-tonsil_wnn_cluster4@meta.data$lib_name_barcode
+```
+
+
+# B cell UMAP
+
+## WNN
+
+```{r}
+DimPlot(object = tonsil_wnn_bcell, cells.highlight = barcode_cluster4, reduction = "wnn.umap", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()
+```
+
+```{r}
+weight.vp<- VlnPlot(tonsil_wnn_bcell, features = "RNA.weight", group.by = "wnn.umap",pt.size = 0)
+p.weight.vp<- VlnPlot(tonsil_wnn_bcell, features = c("peaks.weight","RNA.weight"), group.by = "wnn.umap",pt.size = 0)
+
+weight.vp + ggtitle("RNA modality weight")
+p.weight.vp
+```
+## ATAC
+
+```{r}
+DimPlot(object = tonsil_wnn_bcell, cells.highlight = barcode_cluster4, reduction = "umap.atac", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()
+```
+
+## RNA
+
+```{r}
+
+DimPlot(object = tonsil_wnn_bcell, cells.highlight = barcode_cluster4, reduction = "umap.rna", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()
+```
+
+## split
+
+```{r}
+joint.umap_age<- DimPlot(tonsil_wnn_bcell, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "umap.rna") + plot_annotation(title = 'RNA UMAP ')+ ggtitle('age group') 
+
+joint.umap_hospital<- DimPlot(tonsil_wnn_bcell, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "umap.rna") + plot_annotation(title = 'RNA UMAP ')+ ggtitle('hospital ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+
+```{r}
+joint.umap_age<- DimPlot(tonsil_wnn_bcell, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "umap.atac") + plot_annotation(title = 'ATAC UMAP ')+ ggtitle('Age group') 
+
+joint.umap_hospital<- DimPlot(tonsil_wnn_bcell, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "umap.atac") + plot_annotation(title = 'ATAC UMAP ')+ ggtitle('Hospital ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+# All data UMAP (without doublets)
+
+
+## WNN
+
+```{r}
+DimPlot(object = tonsil_wnn, cells.highlight = barcode_cluster4, reduction = "wnn.umap", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()
+```
+
+```{r }
+new.cluster.ids <- c("MBC/NBC","CD4 T","GC/DZ", "GC/LZ","CD8 T", "PC","Monocytes","CD4 pro")
+names(new.cluster.ids) <- levels(tonsil_wnn)
+tonsil_wnn <- RenameIdents(tonsil_wnn, new.cluster.ids)
+DimPlot(tonsil_wnn, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) +NoLegend()
+```
+
+```{r}
+DimPlot(object = tonsil_wnn,  reduction = "wnn.umap",label = TRUE)+NoLegend()
+```
+
+## ATAC 
+
+```{r}
+DimPlot(object = tonsil_wnn, cells.highlight = barcode_cluster4, reduction = "umap.atac", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()
+```
+
+```{r}
+DimPlot(object = tonsil_wnn,  reduction = "umap.atac", order = TRUE,label = TRUE)+NoLegend()
+```
+
+## RNA
+
+```{r}
+
+DimPlot(object = tonsil_wnn, cells.highlight = barcode_cluster4, reduction = "umap.rna", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()
+```
+```{r}
+DimPlot(object = tonsil_wnn,  reduction = "umap.rna", order = TRUE,label = TRUE)+NoLegend()
+```
+## split 
+
+```{r}
+joint.umap_age<- DimPlot(tonsil_wnn, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "umap.rna") + plot_annotation(title = 'RNA UMAP - All data ')+ ggtitle('age group') 
+
+joint.umap_hospital<- DimPlot(tonsil_wnn, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "umap.rna") + plot_annotation(title = 'RNA UMAP ')+ ggtitle('hospital ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+
+```{r}
+joint.umap_age<- DimPlot(tonsil_wnn, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "umap.atac") + plot_annotation(title = 'ATAC UMAP ')+ ggtitle('Age group') 
+
+joint.umap_hospital<- DimPlot(tonsil_wnn, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "umap.atac") + plot_annotation(title = 'ATAC UMAP - All data ')+ ggtitle('Hospital ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+# Markers
+
+```{r}
+top10_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10mark_cluster4<-top10_tonsil_markers_075[["gene"]][41:50]
+```
+
+```{r}
+top7_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 7, wt = avg_log2FC)
+
+top7mark_cluster4<-top7_tonsil_markers_075[["gene"]][29:35]
+```
+
+
+```{r}
+df_top10<-as.data.frame(top10_tonsil_markers_075)
+
+DT::datatable(df_top10)
+
+```
+
+```{r}
+#install.packages("htmlwidgets", type = "binary")
+#install.packages("DT", type = "binary")
+
+df_top10<-as.data.frame(top10mark_cluster4)
+
+df_top10
+
+```
+```{r}
+#DoHeatmap(tonsil_wnn_bcell)
+
+
+DoHeatmap(tonsil_wnn_bcell,top7_tonsil_markers_075$gene,assay = "RNA")
+
+```
+
+```{r}
+markers_kn<-c("BANK1", "FCER2","CD3D", "IL7R","MKI67", "TOP2A","MARCKSL1", "RGS13", "LMO2", "CCDC88A","GNLY", "NKG7","CD8A",	"FCRL4", "FCRL5", "PLAC8", "SOX5","IGHG1", "IGHA1", "XBP1","LYZ", "S100A8", "CD3D")
+DoHeatmap(tonsil_wnn_bcell,markers_kn,assay = "RNA")
+
+```
+
+```{r eval=FALSE, include=FALSE}
+geneSym <- ifelse(test = !grepl('NA', markers_kn), 
+             yes = sub('.*?-', '', markers_kn),
+             no = sub('-.*', '', markers_kn))
+
+DotPlot(tonsil_wnn_bcell,markers_kn, cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8)) +ggtitle("res 0.1 top 10 of each cluster")
+
+```
+
+
+
+We are going to represent the top 7 markers
+
+
+```{r}
+markers_gg_bcell <- function(x,umap){purrr::map(x, function(x) {
+  
+  p <- FeaturePlot(
+    tonsil_wnn_bcell,
+    features = x,
+    reduction = umap,
+    pt.size = 0.1
+  )
+  p
+})}
+markers_gg_alldata <- function(x,umap){purrr::map(x, function(x) {
+  
+  p <- FeaturePlot(
+    tonsil_wnn,
+    features = x,
+    reduction = umap,
+    pt.size = 0.1
+  )
+  p
+})}
+```
+
+## Pauli markers
+
+
+```{r}
+naive_mem_bcell<-c("BANK1", "FCER2")
+cd4_tcell<-c("CD3D", "IL7R")
+dz_gc_bcell<-c("MKI67", "TOP2A")
+lz_gc_bcell<-c("MARCKSL1", "RGS13", "LMO2", "CCDC88A")	
+cytotoxic<-c("GNLY", "NKG7", "GZMK", "CD8A")
+memory_bcell<-c(	"FCRL4", "FCRL5", "PLAC8", "SOX5")
+pc<-c("IGHG1", "IGHA1", "JCHAIN", "XBP1")
+myeloid<-c("LYZ", "S100A8")	
+poor_q_doublets <-c("FDCSP", "CLU", "CXCL13", "CR2")
+doublet_proliferative_tcell<-c("MT2A", "CD3D", "TRAC", "PCNA")
+Unk<-c("PTPRCAP", "CD37", "CD74")	
+PDC<-c("PTCRA", "LILRA4", "IRF7")
+```
+
+
+## All data
+
+### WNN UMAP
+
+```{r}
+DimPlot(
+  tonsil_wnn,
+  reduction = "wnn.umap",
+  pt.size = 0.1
+) + ggtitle('WNN UMAP')
+```
+
+```{r}
+
+markers_gg_alldata(top7mark_cluster4,"wnn.umap")
+```
+
+### ATAC UMAP
+
+```{r}
+DimPlot(
+  tonsil_wnn,
+  reduction = "umap.atac",
+  pt.size = 0.1
+) + ggtitle('ATAC UMAP Harmony')
+```
+
+
+```{r}
+markers_gg_alldata(top7mark_cluster4,"umap.atac")
+```
+```{r}
+markers_gg_alldata(c("TCL1A","IGHD","FCER2","IGHM","IL4R"),"umap.atac")
+
+```
+
+```{r}
+markers_gg_alldata(naive_mem_bcell,"umap.atac")
+```
+```{r}
+markers_gg_alldata(memory_bcell,"umap.atac")
+```
+
+
+```{r}
+
+markers_gg_alldata(dz_gc_bcell,"umap.atac")
+```
+
+```{r}
+markers_gg_alldata(lz_gc_bcell,"umap.atac")
+```
+
+
+```{r}
+markers_gg_alldata(pc,"umap.atac")
+```
+
+#### T cell 
+
+```{r}
+markers_gg_alldata(cytotoxic,"umap.atac")
+```
+
+```{r}
+markers_gg_alldata(cd4_tcell,"umap.atac")
+```
+
+```{r}
+markers_gg_alldata(myeloid,"umap.atac")
+```
+
+
+
+### RNA UMAP
+
+```{r}
+DimPlot(
+  tonsil_wnn,
+  reduction = "umap.rna",
+  pt.size = 0.1
+) + ggtitle('RNA Harmony')
+```
+
+```{r}
+markers_gg_alldata(top7mark_cluster4,"umap.rna")
+```
+
+```{r}
+markers_gg_alldata(c("TCL1A","IGHD","FCER2","IGHM","IL4R"),"umap.rna")
+
+```
+
+```{r}
+markers_gg_alldata(naive_mem_bcell,"umap.rna")
+```
+```{r}
+markers_gg_alldata(memory_bcell,"umap.rna")
+```
+
+
+```{r}
+markers_gg_alldata(dz_gc_bcell,"umap.rna")
+```
+
+```{r}
+markers_gg_alldata(lz_gc_bcell,"umap.rna")
+```
+
+
+```{r}
+markers_gg_alldata(pc,"umap.rna")
+```
+
+#### T cell 
+
+```{r}
+markers_gg_alldata(cytotoxic,"umap.rna")
+```
+
+```{r}
+markers_gg_alldata(cd4_tcell,"umap.rna")
+```
+
+```{r}
+markers_gg_alldata(myeloid,"umap.rna")
+```
+
+
+## B cell data
+
+
+### WNN UMAP
+
+```{r}
+markers_gg_bcell(top7mark_cluster4,"wnn.umap")
+```
+
+### ATAC UMAP
+```{r}
+DimPlot(
+  tonsil_wnn_bcell,
+  reduction = "umap.atac",
+  pt.size = 0.1
+) + ggtitle('ATAC Harmony B cell')
+```
+
+```{r}
+markers_gg_bcell(top7mark_cluster4,"umap.atac")
+```
+
+
+### RNA UMAP
+```{r}
+DimPlot(
+  tonsil_wnn_bcell,
+  reduction = "umap.rna",
+  pt.size = 0.1
+) + ggtitle('RNA Harmony B cell')
+```
+```{r}
+markers_gg_bcell(top7mark_cluster4,"umap.rna")
+```
+## CoveragePlot
+
+```{r}
+DefaultAssay(tonsil_wnn_bcell) <- "peaks"
+
+# first compute the GC content for each peak
+tonsil_wnn_bcell <- RegionStats(tonsil_wnn_bcell, genome = BSgenome.Hsapiens.UCSC.hg38)
+
+# link peaks to genes
+tonsil_wnn_bcell <- LinkPeaks(
+  object = tonsil_wnn_bcell,
+  peak.assay = "peaks",
+  genes.use = c("LYZ", "MS4A1")
+) 
+```
+
+```{r}
+idents.plot <- c("B naive", "B memory","DZ/GC","LZ/GC","B INTERMEDIATE",
+                 "PC")
+
+p1 <- CoveragePlot(
+  object = tonsil_wnn_bcell,
+  region = "MS4A1",
+  features = "MS4A1",
+  expression.assay = "SCT",
+  idents = idents.plot,
+  extend.upstream = 500,
+  extend.downstream = 10000
+)
+
+p2 <- CoveragePlot(
+  object = tonsil_wnn_bcell,
+  region = "LYZ",
+  features = "LYZ",
+  expression.assay = "SCT",
+  idents = idents.plot,
+  extend.upstream = 8000,
+  extend.downstream = 5000
+)
+
+patchwork::wrap_plots(p1, p2, ncol = 1)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

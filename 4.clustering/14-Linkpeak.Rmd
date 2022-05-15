@@ -1,0 +1,328 @@
+---
+title: "13-Link peak"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load package
+
+
+```{r message=FALSE, warning=FALSE}
+library("RColorBrewer")
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+#library(SeuratWrappers)
+library(harmony)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(kableExtra)
+library(tidyverse)
+library(ggpubr)
+library(reshape2)
+library(BSgenome.Hsapiens.UCSC.hg38)
+set.seed(123)
+```
+
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj_peakcall_normalized<- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/14.2.tonsil_multiome_bcells_without_cluster4_doublets_normalized_Linkpeaks_normalized.rds")
+
+path_to_obj_alldata <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/12.1.tonsil_multiome_without_cluster7_doublets_normalized_Linkpeak.rds")
+
+path_to_markers<-("~/Documents/multiome_tonsil_Lucia/results/tables/tonsil_markers_bcell_withoutclust4_075.csv")
+
+
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_bcell_linkpeak_normalised <- readRDS(path_to_obj_peakcall_normalized)
+
+tonsil_wnn_bcell_nopeakcall <- readRDS(path_to_obj_nonpeakcall)
+tonsil_wnn_alldata <- readRDS(path_to_obj_alldata)
+
+tonsil_markers_075<-read_csv(path_to_markers)
+```
+
+# UMAP 
+
+```{r}
+ DimPlot(
+    tonsil_wnn_bcell_linkpeak,
+    group.by = "wsnn_res.0.075",
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+```
+
+```{r}
+ DimPlot(
+    tonsil_wnn_alldata,
+    group.by = "wsnn_res.0.075",
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+```
+# Link peaks
+
+```{r eval=FALSE, include=FALSE}
+DefaultAssay(tonsil_wnn_bcell_linkpeak_normalised) <- "ATAC"
+
+# first compute the GC content for each peak
+tonsil_wnn_bcell_linkpeak_normalised <- RegionStats(tonsil_wnn_bcell_linkpeak_normalised, genome = BSgenome.Hsapiens.UCSC.hg38)
+
+# link peaks to genes
+tonsil_wnn_bcell_linkpeak_normalised <- LinkPeaks(
+  object = tonsil_wnn_bcell_linkpeak_normalised,
+  peak.assay = "ATAC",
+  expression.assay = "RNA"
+)
+```
+
+```{r eval=FALSE, include=FALSE}
+tonsil_wnn_bcell_LP<-tonsil_wnn_bcell_linkpeak_normalised
+DefaultAssay(tonsil_wnn_bcell_LP) <- "ATAC"
+
+# first compute the GC content for each peak
+tonsil_wnn_bcell_LP <- RegionStats(tonsil_wnn_bcell_LP, genome = BSgenome.Hsapiens.UCSC.hg38)
+
+# link peaks to genes
+tonsil_wnn_bcell_LP <- LinkPeaks(
+  object = tonsil_wnn_bcell_LP,
+  peak.assay = "ATAC",
+  expression.assay = "RNA",
+  genes.use = c("BCL6","PRDM1"),
+  distance = 2e+8
+)
+```
+
+```{r eval=FALSE, include=FALSE}
+tonsil_wnn_bcell_LP<-tonsil_wnn_bcell_linkpeak
+DefaultAssay(tonsil_wnn_bcell_LP) <- "ATAC"
+
+# first compute the GC content for each peak
+tonsil_wnn_bcell_LP <- RegionStats(tonsil_wnn_bcell_LP, genome = BSgenome.Hsapiens.UCSC.hg38)
+
+# link peaks to genes
+tonsil_wnn_bcell_LP <- LinkPeaks(
+  object = tonsil_wnn_bcell_LP,
+  peak.assay = "ATAC",
+  expression.assay = "RNA",
+  genes.use = c("BCL6","PRDM1"),
+  distance = 1e+9
+)
+
+df_gw<-as.data.frame(Links(tonsil_wnn_bcell_LP))
+df_gw[df_gw$gene=="BCL6",]
+df_gw[df_gw$gene=="PRDM1",]
+df_gw
+```
+```{r}
+
+df_LP[df_LP$gene=="PRDM1",]
+df_LP[df_LP$gene=="BCL6",]
+df_LP
+```
+
+```{r}
+df<-as.data.frame(Links(tonsil_wnn_bcell_linkpeak))
+df[df$gene=="BCL6",]
+df[df$gene=="PRDM1",]
+df
+```
+
+
+# Rename clusters
+
+```{r}
+new.cluster.ids <- c("MBC/NBC", "CD8 T","GC/DZ", "GC/LZ","CD4 T","PC", "Monocytes", "T prolif")
+names(new.cluster.ids) <- levels(tonsil_wnn_alldata)
+tonsil_wnn_alldata <- RenameIdents(tonsil_wnn_alldata, new.cluster.ids)
+DimPlot(tonsil_wnn_alldata, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+```{r}
+m<-c("PRDM1","XBP1","IRF4","MEF2B","BCL6", "SUGCT", "CXCR4","CD83","BCL2A1","MEF2B", "BCL6","IRF4","PRDM1","SLAMF7")
+
+
+coverage_gg <- function(x,seuratobject){purrr::map(x, function(x) {
+  
+  p <- CoveragePlot(
+  object = seuratobject,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 5000000,
+  extend.downstream = 10000000
+  #tile = TRUE
+  )
+  p
+})}
+
+```
+
+
+## All cells data
+
+
+```{r}
+idents.plot<-c("MBC/NBC", "CD8 T","GC/DZ", "GC/LZ","CD4 T","PC", "Monocytes", "T prolif")
+
+DefaultAssay(tonsil_wnn_alldata) <- "peaks"
+
+coverage_gg(m,tonsil_wnn_alldata)
+```
+
+
+## B cell data
+
+
+```{r}
+tile_plot <- TilePlot(
+  object = tonsil_wnn_bcell_linkpeak_normalised,
+  region = "BCL6",
+  idents = idents.plot
+)
+tile_plot
+```
+
+
+```{r}
+Idents(tonsil_wnn_bcell_linkpeak_normalised)<-"wsnn_res.0.075"
+new.cluster.ids <- c("MBC","NBC", "GC/DZ", "GC/LZ","PC","M/N BC")
+
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell_linkpeak_normalised)
+tonsil_wnn_bcell_linkpeak_normalised <- RenameIdents(tonsil_wnn_bcell_linkpeak_normalised, new.cluster.ids)
+DimPlot(tonsil_wnn_bcell_linkpeak_normalised, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+
+
+```{r}
+DefaultAssay(tonsil_wnn_bcell_linkpeak_normalised) <- "ATAC"
+
+coverage_gg(m,tonsil_wnn_bcell_linkpeak_normalised)
+```
+
+
+
+```{r}
+plot(density(tonsil_wnn_bcell_linkpeak@assays[["ATAC"]]@links@elementMetadata@listData[["score"]])
+)
+
+```
+```{r}
+s<-tonsil_wnn_bcell_linkpeak@assays[["ATAC"]]@links@elementMetadata@listData[["score"]]
+
+g<-tonsil_wnn_bcell_linkpeak@assays[["ATAC"]]@links@elementMetadata@listData[["gene"]]
+
+dotchart(s, labels = datos$mes, pch = 21, bg = "green", pt.cex = 1.5)
+```
+
+# 2 markers for cluster
+
+
+```{r}
+top2_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+
+```
+
+```{r}
+top2_1<-top2_tonsil_markers_075$...1[1:6]
+top2_2<-top2_tonsil_markers_075$...1[8:12]
+top2<-c(top2_1,top2_1)
+
+DefaultAssay(tonsil_wnn_bcell_linkpeak_normalised) <- "ATAC"
+
+coverage_gg(top2,tonsil_wnn_bcell_linkpeak_normalised)
+```
+
+```{r}
+cor(tonsil_wnn_bcell_linkpeak_normalised$nucleosome_percentile, mdf$zscore.y)
+p1 <- ggplot(mdf, aes(x = zscore.x, y = zscore.y, label = gene)) +
+  geom_point(size = 0.2, alpha = 0.5)+ pretty_plot(fontsize = 7) + L_border() +
+  labs(x = "Peak to RNA z-score ", y= "Zscore Peak to Protein")
+cowplot::ggsave2(p1, file = "../plots/peak_to_gene_zscores.pdf", width = 1.8, height = 1.8)
+```
+
+
+# Weights
+
+```{r}
+weight.vp<- VlnPlot(tonsil_wnn_bcell_linkpeak_normalised, features = "RNA.weight", group.by = "wsnn_res.0.075",pt.size = 0)
+p.weight.vp<- VlnPlot(tonsil_wnn_bcell_linkpeak_normalised, features = c("peaks.weight","RNA.weight"), group.by = "wsnn_res.0.075",pt.size = 0)
+
+weight.vp + ggtitle("RNA modality weight")
+p.weight.vp+ ggtitle("ATAC modality weight")
+```
+
+```{r}
+VlnPlot(tonsil_wnn_bcell_linkpeak_normalised, features = c("peaks.weight","RNA.weight"), group.by = "wsnn_res.0.075",pt.size = 0)
+```
+
+
+```{r}
+tonsil_wnn$weight<-c(tonsil_wnn_bcell_linkpeak_normalised$RNA.weight,tonsil_wnn_bcell_linkpeak_normalised$peaks.weight)
+
+weight<-as.data.frame(tonsil_wnn_bcell_linkpeak_normalised[[c("RNA.weight","peaks.weight","seurat_clusters")]])
+
+weight.melted<-melt(weight)
+
+ggviolin(
+  weight.melted,
+  x="seurat_clusters",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  color = "variable")
+
+```
+
+```{r}
+figure <- ggplot(weight.melted, aes(x = seurat_clusters, y = value, fill = variable)) + geom_violin() + 
+  labs(x="clusters", y="Weights")
+figure
+```
+
+
+
+
+
+# Save links peaks
+
+```{r}
+path_to_save<- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.tonsil_multiome_bcells_Linkpeaks.rds")
+path_to_save_normalized<- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.1.tonsil_multiome_bcells_Linkpeaks_normalized.rds")
+
+
+saveRDS(tonsil_wnn_bcell_linkpeak_normalised, path_to_save_normalized)
+saveRDS(tonsil_wnn_bcell_LP, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14.5.tonsil_multiome_bcells_Linkpeaks_bcl6_prdm1_with_MBC_NBC_cluster.rds")
+
+```
+

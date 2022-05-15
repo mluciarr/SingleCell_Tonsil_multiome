@@ -1,0 +1,755 @@
+---
+title: "7- Filtering cluster 7"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load packages
+
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(Signac)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(magick)
+library(knitr) 
+library(kableExtra)
+library(devtools)
+library(harmony)
+library(patchwork)
+library(kableExtra)
+
+
+```
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/11.tonsil_multiome_integrated_without_doublets_normalized.rds")
+path_to_save <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/12.tonsil_multiome_without_cluster7_doublets_normalized.rds")
+
+```
+
+
+## Load data
+
+```{r eval=FALSE, include=FALSE}
+tonsil_wnn <- readRDS(path_to_obj)
+```
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+
+## Filtering  doublet cluster  7
+
+
+```{r echo=TRUE}
+tonsil_wnn$is_tcell <- 
+   tonsil_wnn$wsnn_res.0.02 == "7"
+  
+
+tonsil_wnn <- subset(tonsil_wnn, subset = is_tcell == FALSE)
+
+
+```
+
+```{r echo=TRUE}
+DimPlot(tonsil_wnn, reduction = "wnn.umap", group.by = "wsnn_res.0.02", label = TRUE, pt.size = 0.1)
+```
+
+
+
+## scATAC
+
+### Normalization and linear dimensional reduction
+
+ We exclude the first dimension as this is typically correlated with sequencing depth
+Cells cluster completely separately in ATAC without harmony; so run harmony after SVD
+
+RunSVD LSI
+```{r}
+DefaultAssay(tonsil_wnn) <- "peaks"
+tonsil_wnn <- RunTFIDF(tonsil_wnn)
+tonsil_wnn <- FindTopFeatures(tonsil_wnn, min.cutoff = "q0")
+tonsil_wnn <- RunSVD(tonsil_wnn)
+```
+
+
+
+### Plot the Depth correlation plot
+
+Compute the correlation between total counts and each reduced dimension component.
+
+LSI component is typically highly correlated with sequencing depth. 
+The first LSI component often captures sequencing depth (technical variation) rather 
+than biological variation. If this is the case, the component should be removed from 
+downstream analysis. We can assess the correlation between each LSI component and 
+sequencing depth using the DepthCor() function:
+
+For scRNA-seq data we don't typically observe such a strong relationship between the first PC and sequencing depth, and so usually retain the first PC in downstream analyses.
+
+
+```{r fig.wide=TRUE}
+
+DepthCor(tonsil_wnn)
+
+```
+
+Here we see there is a very strong correlation between the first LSI component and the total 
+number of counts for the cell, so we will perform downstream steps without this component.
+
+
+### UMAP representation
+
+* dimensional reduction key, specifies the string before the number for the dimension names. UMAP by default
+* reduction.name: Name to store dimensional reduction under in the Seurat object
+
+
+```{r fig.wide=TRUE}
+tonsil_wnn <- RunUMAP(
+  tonsil_wnn,
+  dims = 2:40,
+  reduction = "lsi",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+atac.umap<-DimPlot(
+  tonsil_wnn,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + ggtitle('scATAC UMAP') + NoLegend()
+
+atac.umap
+
+#split_by: library ,edad, genero
+```
+
+
+
+## scRNA
+
+### Normalization and linear dimensional reduction- 
+
+### NormalizeData
+
+```{r message=FALSE, warning=FALSE}
+DefaultAssay(tonsil_wnn) <- "RNA"
+tonsil_wnn <- NormalizeData(
+  tonsil_wnn,
+  normalization.method = "LogNormalize",
+  scale.factor = 1e4
+)
+
+tonsil_wnn <- tonsil_wnn %>%
+  FindVariableFeatures(nfeatures = 3000) %>%
+  ScaleData() %>% 
+  RunPCA() 
+```
+
+
+
+```{r}
+PCAPlot(tonsil_wnn,
+  group.by = "library_name")
+
+```
+
+
+```{r}
+ElbowPlot(object = tonsil_wnn)
+```
+
+
+### UMAP representation
+
+```{r}
+tonsil_wnn <- RunUMAP(
+  tonsil_wnn,
+  dims = 1:30,
+  reduction = "pca",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+rna.umap<-DimPlot(
+  tonsil_wnn,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1) + NoLegend() + ggtitle('scRNA UMAP')
+
+rna.umap
+```
+
+
+```{r}
+atac.umap + rna.umap
+```
+
+
+hacer primero harmony, quitar batch effect. 
+atac y rna. harmony
+
+# Run Harmony 
+
+Pass the Seurat object to the RunHarmony function and specify which variable to integrate 
+out. A Seurat object is returned with corrected Harmony coordinates.
+
+## scATAC
+
+```{r}
+DefaultAssay(tonsil_wnn) <- "peaks"
+tonsil_wnn <- RunHarmony(
+  object = tonsil_wnn,
+  reduction = "lsi",
+  dims = 2:40,
+  group.by.vars = "library_name",
+  assay.use = "peaks",
+  project.dim = FALSE,
+  reduction.save = "harmony_peaks"
+)
+```
+
+
+### UMAP representation
+
+```{r}
+tonsil_wnn <- RunUMAP(
+  tonsil_wnn,
+  dims = 2:40,
+  reduction = "harmony_peaks",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+
+Harm_peak<-DimPlot(
+  tonsil_wnn,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('Peak Harmony')
+```
+
+# scRNA
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+DefaultAssay(tonsil_wnn) <- "RNA"
+tonsil_wnn <- RunHarmony(
+  object = tonsil_wnn,
+  reduction = "pca",
+  dims = 1:30,
+  group.by.vars = "library_name",
+  assay.use = "RNA",
+  project.dim = FALSE,
+  reduction.save = "harmony_rna"
+)
+```
+
+```{r}
+tonsil_wnn <- RunUMAP(
+  tonsil_wnn,
+  dims = 2:40,
+  reduction = "harmony_rna",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+Harm_rna<-DimPlot(
+  tonsil_wnn,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('RNA Harmony')
+```
+
+## scATAC and RNAseq Harmony
+
+```{r}
+Harm_peak+Harm_rna 
+```
+
+
+## Joint UMAP visualization
+
+**FindNeighbors**
+
+Constructs a Shared Nearest Neighbor (SNN) Graph for a given dataset. We first 
+determine the k-nearest neighbors of each cell. We use this knn graph to construct 
+the SNN graph by calculating the neighborhood overlap (Jaccard index) between 
+every cell and its k.param nearest neighbors.
+
+```{r}
+# build a joint neighbor graph using both assays
+tonsil_wnn <- FindMultiModalNeighbors(
+  object = tonsil_wnn,
+  reduction.list = list("harmony_peaks", "harmony_rna"),
+  dims.list = list(2:40, 1:30), modality.weight.name = "Joint_snn_umap"
+  )
+
+# build a joint UMAP visualization
+
+tonsil_wnn <- RunUMAP(
+  object = tonsil_wnn,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_")
+```
+
+```{r}
+joint.umap<- DimPlot(tonsil_wnn, label = FALSE, group.by = "library_name", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP')+ ggtitle('Joint UMAP by library name') + NoLegend()
+
+joint.umap
+```
+
+
+```{r}
+joint.umap_age<- DimPlot(tonsil_wnn, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_hospital<- DimPlot(tonsil_wnn, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+## FindClusters
+
+```{r}
+#find cluster algorithm 3 = SLM algorithm
+
+tonsil_wnn <- FindClusters(tonsil_wnn, resolution = c(0.05,0.075),algorithm = 3, graph.name = "wsnn",verbose = FALSE)
+print(colnames(tonsil_wnn@meta.data))
+```
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+
+"Naive/Memory B-cell", "CD4+ T-cell","DZ/GC","LZ/GC","CD8+ T-cell","PC","Monocytes","CD4+ T-cell"
+
+## Find all Markers 
+
+```{r}
+Idents(tonsil_wnn)<-"wsnn_res.0.075"
+tonsil_markers_075<-FindAllMarkers(object = tonsil_wnn, only.pos = TRUE)
+write.csv(tonsil_markers_075,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "tonsil_markers_075_nocluster6n7.csv"))
+```
+
+### Get top n for each cluster
+
+**Resolution 0.075**
+ 
+```{r}
+tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC) %>% write.csv(.,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "top10_tonsil_markers_075_nocluster7.csv.csv"))
+
+tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC) %>% write.csv(.,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "top5_tonsil_markers_075_nocluster7.csv.csv"))
+
+top7_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 7, wt = avg_log2FC)
+top5_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+top10_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+```
+
+```{r}
+df_top5<-as.data.frame(top5_tonsil_markers_075)
+kbl(df_top5,caption = "Table of the top 5 marker of each cluster resolution 0.005") %>%
+  kable_paper("striped", full_width = F)
+```
+
+# Markers exploration
+
+```{r}
+markers_gg <- function(x){purrr::map(x, function(x) {
+  
+  p <- FeaturePlot(
+    tonsil_wnn,
+    features = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1
+  )
+  p
+})}
+```
+
+**MARKERS**
+
+Immature B cells express CD19, CD 20, CD34, CD38, and CD45R,
+T-cell receptor/CD3 complex (TCR/CD3 complex) 
+
+
+* **T-cells** (identified by high expression of CD3D and CD3E).
+* **monocytes** (identified by high expression of LYZ and S100A8).
+* **naive B-cells** (identified by high expression of CD79A, CD79B and BLNK).
+* **plasma cells** (identified by B-cell and proliferation markers, such as TOP2A or MKI67).
+* poor-quality cells (identified by high mitochondrial expression). If a cell has pores in the membrane due to cell lysis, the cytosolic mRNA will leak out of the cell; but if the diameter of mitochondria is higher than the pores, they will get trapped inside the cell.
+
+
+`
+
+
+```{r}
+monocytes_markers<-c("LYZ","S100A8")
+
+naive_markers<-c("CD79A", "CD79B", "BLNK")
+
+bib_Bcell_markers<-c("CD19","CR2","MS4A1","RALGPS2","CD79A")
+bib_Tcell_markers<-c("CD3E","CD4","CD8A","FOXP3","IL17A")
+
+markers_bcell<-c("BANK1","ARHGAP24","ADAM28","MARCH1","RAPGEF5","AFF2","RGS13","LPP","IGHG1","IGLC1","SLC8A1","LYZ","PLXDC2","FAM160A1","IGHA1","IGLC2", "SETBP1","ENTPD1","COL19A1","CCSER1")
+
+markers_tcell<-c("INPP4B","FYB1","LEF1","IL7R","IL6ST","CCL5","GNLY","NKG7","DTHD1","RUNX2", "FOXP3","CD8A","IL17A","CD2")
+
+```
+
+## Bibliography  markers
+
+### T-cells
+
+CD8+ T cell markers:"CD3D", "CD8A"
+NK cell markers:"GNLY", "NKG7"
+
+```{r}
+markers_gg (bib_Tcell_markers)
+```
+
+### B cells
+
+
+```{r}
+markers_gg(bib_Bcell_markers)
+```
+
+
+#### Monocytes 
+
+```{r}
+markers_gg(monocytes_markers)
+```
+
+#### Naive 
+
+```{r}
+markers_gg (naive_markers)
+
+```
+
+```{r}
+markers_gg (naive_markers)
+
+```
+
+### Iñaki Markers 
+
+```{r}
+m<-c("PRDM1","XBP1","IRF4","MEF2B","BCL6")
+
+DZ<-c("SUGCT", "CXCR4", "AICDA")
+
+LZ<- c("CD83","BCL2A1")
+
+GC<- c("MEF2B", "BCL6","IRF4")
+
+PC<- c("PRDM1","SLAMF7", "MZB1", "FKBP11")
+
+
+markers_gg(m)
+
+```
+
+
+
+#### Dark Zone
+
+```{r}
+markers_gg(DZ)
+
+```
+
+#### Light Zone
+
+```{r}
+markers_gg(LZ)
+
+```
+
+#### Germinal Center
+
+
+```{r}
+markers_gg(GC)
+
+```
+
+#### Plasma cell
+
+
+```{r}
+markers_gg(PC)
+
+```
+
+### Pauli markers
+
+
+```{r}
+naive_mem_bcell<-c("BANK1", "FCER2")
+cd4_tcell<-c("CD3D", "IL7R")
+dz_gc_bcell<-c("MKI67", "TOP2A")
+lz_gc_bcell<-c("MARCKSL1", "RGS13", "LMO2", "CCDC88A")	
+cytotoxic<-c("GNLY", "NKG7", "GZMK", "CD8A")
+memory_bcell<-c(	"FCRL4", "FCRL5", "PLAC8", "SOX5")
+pc<-c("IGHG1", "IGHA1", "JCHAIN", "XBP1")
+myeloid<-c("LYZ", "S100A8")	
+poor_q_doublets <-c("FDCSP", "CLU", "CXCL13", "CR2")
+doublet_proliferative_tcell<-c("MT2A", "CD3D", "TRAC", "PCNA")
+Unk<-c("PTPRCAP", "CD37", "CD74")	
+PDC<-c("PTCRA", "LILRA4", "IRF7")
+```
+
+```{r}
+markers_gg(naive_mem_bcell)
+```
+```{r}
+markers_gg(cd4_tcell)
+```
+```{r}
+
+markers_gg(dz_gc_bcell)
+```
+
+```{r}
+markers_gg(lz_gc_bcell)
+```
+```{r}
+markers_gg(cytotoxic)
+```
+Cytotoxic T cells are effector cells that destroy virus-infected cells, tumor cells, and tissue grafts that exist in the cytosol, or contiguous nuclear compartment. The cells are also known as CD8+ T 
+
+```{r}
+
+markers_gg(pc)
+```
+```{r}
+markers_gg(myeloid)
+```
+
+```{r}
+markers_gg(poor_q_doublets)
+```
+```{r}
+markers_gg(doublet_proliferative_tcell)
+```
+```{r}
+
+markers_gg(Unk)
+```
+```{r}
+
+markers_gg(PDC)
+
+```
+
+# Rename clusters
+
+
+```{r}
+cell.num <- table(Idents(tonsil_wnn_without_doublet))
+cell.num
+```
+
+```{r}
+new.cluster.ids <- c("Naive/Memory B-cell", "CD4+ T-cell","DZ/GC","LZ/GC","CD8+ T-cell","PC","Monocytes","CD4+ T-cell")
+names(new.cluster.ids) <- levels(tonsil_wnn)
+tonsil_wnn <- RenameIdents(tonsil_wnn, new.cluster.ids)
+DimPlot(tonsil_wnn, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+
+
+
+## Mithocondrial
+
+
+```{r}
+FeaturePlot(
+    tonsil_wnn,
+    features = "percent.mt",
+    reduction = "wnn.umap",
+    pt.size = 0.1
+  )
+```
+
+```{r}
+VlnPlot(tonsil_wnn, features = "percent.mt", group.by = "wsnn_res.0.05", pt.size=0)
+```
+```{r}
+VlnPlot(tonsil_wnn, features = "percent_ribo", group.by = "wsnn_res.0.05", pt.size=0)
+```
+
+## Doublet score
+
+
+```{r}
+FeaturePlot(
+    tonsil_wnn,
+    features = "doublet_scores",
+    reduction = "wnn.umap",
+    pt.size = 0.1
+  )
+```
+```{r eval=FALSE, include=FALSE}
+tonsil_wnn<-FindSubCluster(
+  tonsil_wnn,
+  5,
+  graph.name="wsnn",
+  subcluster.name = ,"sub.cluster5",
+  resolution = 0.25,
+  algorithm = 3
+)
+
+```
+```{r}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^sub.cluster")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p
+})
+clusters_gg 
+```
+
+#Link genes
+
+```{r}
+DefaultAssay(tonsil_wnn) <- "peaks"
+
+# first compute the GC content for each peak
+tonsil_wnn <- RegionStats(tonsil_wnn, genome = BSgenome.Hsapiens.UCSC.hg38)
+
+# link peaks to genes
+tonsil_wnn <- LinkPeaks(
+  object = tonsil_wnn,
+  peak.assay = "peaks",
+  expression.assay = "RNA"
+)
+```
+# Rename clusters
+
+```{r}
+new.cluster.ids <- c("B memory/naive","CD8 T","DZ/GC","LZ/GC","CD4 T","PC","monocytes","T cell pro")
+names(new.cluster.ids) <- levels(tonsil_wnn)
+tonsil_wnn <- RenameIdents(tonsil_wnn, new.cluster.ids)
+DimPlot(tonsil_wnn, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+"B memory/naive","CD8 T",DZ/GC","LZ/GC","CD4 T","PC","monocytes"
+```{r}
+idents.plot <- c("B memory/naive","CD8 T","DZ/GC","LZ/GC","CD4 T","PC","monocytes","T cell pro")
+
+m<-c("PRDM1","XBP1","IRF4","MEF2B","BCL6", "SUGCT", "CXCR4","CD83","BCL2A1","MEF2B", "BCL6","IRF4","PRDM1","SLAMF7")
+
+coverage_gg <- function(x){purrr::map(x, function(x) {
+  
+  p <- CoveragePlot(
+  object = tonsil_wnn,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 5000,
+  extend.downstream = 10000
+  )
+  p
+})}
+coverage_gg(m)
+```
+
+
+```{r}
+
+p1 <- CoveragePlot(
+  object = tonsil_wnn,
+  region = "ANK3",
+  features = "ANK3",
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 8000,
+  extend.downstream = 1000000
+)
+  
+p2 <- CoveragePlot(
+  object = tonsil_wnn,
+  region = "PRDM1",
+  features = "PRDM1",
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 8000,
+  extend.downstream = 10000
+)
+p3 <- CoveragePlot(
+  object = tonsil_wnn,
+  region = "MEF2B",
+  features = "MEF2B",
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 8000,
+  extend.downstream = 10000
+)
+p1
+p2
+p3
+#patchwork::wrap_plots(p1, p2, ncol = 1)
+```
+
+# Save
+
+```{r}
+saveRDS(tonsil_wnn, path_to_save)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

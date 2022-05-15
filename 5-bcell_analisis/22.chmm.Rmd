@@ -1,0 +1,1106 @@
+---
+title: "Chmm"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this notbook we are going to filter link by DARs and DEA in order to analyse 
+those peak that are deferentially expressed and deferentially accessible
+
+
+# Pre-processing 
+
+## Load package
+
+
+```{r}
+
+library(Signac)
+library(Seurat)
+library(tidyverse)
+library(data.table)
+library(stringr)
+library(ggpubr)
+library(pheatmap)
+library(RColorBrewer)
+library(ComplexUpset)
+library(caTools)
+library(reshape2)
+library(gridExtra)
+library(grid)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(BSgenome)
+library(Repitools)
+library(UpSetR)
+library(GenomicRanges)
+library(cowplot)
+library(ggplotify)
+library(viridis)
+library(plyr)
+library(biomaRt)
+library(BiocManager)
+library(Repitools)
+set.seed(123)
+
+```
+
+
+## Parameters
+
+```{r message=FALSE, warning=FALSE}
+general_path <- "~/Documents/multiome_tonsil_Lucia/"
+
+# Paths
+path_to_obj_links_DARs_DEA <- (paste0(general_path,"results/R_objects/19.tonsil_multiome_bcell_level_1_Genomewide_Linkpeak_DARs_DEA.rds"))
+
+path_to_markers<-(paste0(general_path,"results/tables/18_tonsil_markers_level_1_namecluster.csv"))
+path_to_join_link_DARs_DEA<-  (paste0(general_path,"results/tables/19.df_joint_link_DARs_DEA_level_1_Genwide.csv"))
+path_to_join_link_DARs <- (paste0(general_path,"results/tables/19.df_joint_link_DARs_level_1_Genwide.csv"))
+path_to_DARs<-(paste0(general_path,"results/tables/19.df_DARs_level_1.csv"))
+
+
+chrom_sizes_path <- paste0(general_path,"outside_files/chrom.sizes")
+
+```
+
+
+
+## Load data
+
+```{r message=FALSE, warning=FALSE}
+tonsil_wnn_bcell_links_DARs_DEA <- readRDS(path_to_obj_links_DARs_DEA)
+tonsil_DARs<-read_csv(path_to_DARs)
+tonsil_markers<-read_csv(path_to_markers)
+df_link_DARs<-read_csv(path_to_join_link_DARs)
+df_links_DARs_DEA<- read_csv(path_to_join_link_DARs_DEA)
+```
+
+```{r}
+peaks<-Links(tonsil_wnn_bcell_links_DARs_DEA)
+```
+
+```{r}
+# Chromatin states features
+chromHMM <- load((paste0(general_path,"data/Chmm.All.Samples.common.bins.hg38.RData")))
+
+chromHMM_df <- as.data.frame(GenomeBinsChmm)
+chromHMM_NBC_GCBC_MBC_PC <- as.data.frame(GenomeBinsChmm[,c(1,3,9,13)])
+
+chromHMM_NBC_GR <- makeGRangesFromDataFrame(chromHMM_NBC_GCBC_MBC_PC[,c(1,2,3,8)],
+keep.extra.columns = T)
+chromHMM_MBC_GR <- makeGRangesFromDataFrame(chromHMM_NBC_GCBC_MBC_PC[,c(1,2,3,6)],
+keep.extra.columns = T)
+chromHMM_GCBC_GR <-makeGRangesFromDataFrame(chromHMM_NBC_GCBC_MBC_PC[,c(1,2,3,7)],
+keep.extra.columns = T)
+chromHMM_PC_GR <-makeGRangesFromDataFrame(chromHMM_NBC_GCBC_MBC_PC[,c(1,2,3,9)],
+keep.extra.columns = T)
+
+#chromHMM_list_NBC_GCBC_MBC_PC <- GRangesList(NBC = chromHMM_NBC_GR, 
+                                             # MBC= chromHMM_MBC_GR,
+                                             # GCBC=chromHMM_GCBC_GR,
+                                             # PC=chromHMM_PC_GR)
+
+# table(chromHMM_NBC_GCBC_MBC_PC$csMBC1_12_segments.bed)
+# table(chromHMM_NBC_GCBC_MBC_PC$GCBC1_12_segments.bed)
+```
+
+# Chromatin States analysis.
+
+The genome-wide map of the chromatin states for the 4 major B-cell subtypes (naive B cells (NBC), germinal center B cells (GCBC), memory B cells (MBC), and plasma cells (PC)) was downloaded from ["The Reference Epigenome and Regulatory Chromatin Landscape of Chronic Lymphocytic Leukemia"](https://www.nature.com/articles/s41591-018-0028-4). Specifically, 12 distinct chromatin states were defined at 200 base pairs of resolution in three different replicas for each B cell subpopulation.
+
+  - Active Promoter = E1
+  - Weak Promoter = E3
+  - Poised Promoter = E4
+  - *Strong Enh = E2*
+  - *Strong Enh2 = E6*
+  - *Weak Enh = E5*
+  - Transcription Transition = E7
+  - Transcription Elongation = E9
+  - Weak Transcription = E8
+  - Heterochrom,repressed = E10
+  - Polycomb Repressed = E12
+  - Heterochrom, low signal = E11
+
+## Links
+
+
+## GRanger of hg38 gene annotation
+
+
+```{r message=FALSE, warning=FALSE}
+## more recent data from internet
+ensembl <- useMart(biomart = "ensembl",dataset="hsapiens_gene_ensembl")
+ensembl
+Datasets <- listDatasets(ensembl)
+Datasets[grep("hsapiens_gene_ensembl",Datasets$dataset),] ## hg38 version!!!!!!!!
+hg38.gene.annot <- getBM(attributes = c("ensembl_gene_id","entrezgene_id","hgnc_symbol",
+                                       "chromosome_name","start_position","end_position",
+                                       "strand","band","gene_biotype"
+),
+mart = ensembl
+)
+
+#table(hg38.gene.annot$chromosome_name,exclude=NULL)
+#table(hg38.gene.annot$strand,exclude=NULL)
+
+
+## remove MT, sexual chromosomes and random chr. Arrange also strand info.
+hg38.gene.annot <- hg38.gene.annot[which(hg38.gene.annot$chromosome_name %in% paste0(1:22)),]
+hg38.gene.annot$chromosome_name <- paste0("chr",hg38.gene.annot$chromosome_name)
+hg38.gene.annot$strand[which(hg38.gene.annot$strand==1)] <- "+"
+hg38.gene.annot$strand[which(hg38.gene.annot$strand=="-1")] <- "-"
+table(hg38.gene.annot$chromosome_name,exclude=NULL)
+table(hg38.gene.annot$strand,exclude=NULL)
+#head(hg38.gene.annot);dim(hg38.gene.annot)
+
+
+##polish gene annotation
+any(is.na(hg38.gene.annot$ensembl_gene_id))
+any(hg38.gene.annot$ensembl_gene_id=="")
+any(is.na(hg38.gene.annot$entrezgene_id))
+any(na.omit(hg38.gene.annot$entrezgene_id)=="")
+any(is.na(hg38.gene.annot$hgnc_symbol))
+any(hg38.gene.annot$hgnc_symbol=="")
+hg38.gene.annot$hgnc_symbol[which(hg38.gene.annot$hgnc_symbol=="")] <- NA
+hg38<-hg38.gene.annot[complete.cases(hg38.gene.annot),]
+
+##make GRange object
+hg38.gene.annot.GR <- GRanges(seqnames = hg38.gene.annot$chromosome_name,
+                             ranges = IRanges(hg38.gene.annot$start_position,end = hg38.gene.annot$end_position),
+                             strand = hg38.gene.annot$strand
+)
+mcols(hg38.gene.annot.GR) <- hg38.gene.annot[,grep("^chromosome_name$|^start_position$|^end_position|^strand$$",colnames(hg38.gene.annot),value = T,invert = T)]
+hg38.gene.annot.GR <- sort(sortSeqlevels(hg38.gene.annot.GR))
+#hg38.gene.annot.GR
+
+## Extend 2,000bps upstream of promoters
+hg38.gene.annot.2000.GR <- punion(promoters(x = hg38.gene.annot.GR,upstream = 2000,downstream = 0),
+                                 hg38.gene.annot.GR
+)
+
+saveRDS(hg38.gene.annot.GR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/hg38.gene.annot.GR.rds")
+saveRDS(hg38.gene.annot.2000.GR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/hg38.gene.annot.2000.GR.rds")
+## add metadata of the genes names 
+
+values(hg38.gene.annot.GR) <- DataFrame(hgnc_symbol = hg38.gene.annot$hgnc_symbol)
+ranges(hg38.gene.annot.GR[(elementMetadata(hg38.gene.annot.GR)[,1] %in% df_links_DARs_DEA$gene
+                    )])
+```
+
+### From dataframe to Granges
+
+```{r}
+gr_link<-GRanges(seqnames = df_links_DARs_DEA$seqnames, ranges = IRanges(start=df_links_DARs_DEA$start,end = df_links_DARs_DEA$end),strand = df_links_DARs_DEA$strand)
+values(gr_link)<-DataFrame(
+                                            strand=df_links_DARs_DEA$strand,
+                                            score=df_links_DARs_DEA$score,
+                                            gene=df_links_DARs_DEA$gene,
+                                            peak=df_links_DARs_DEA$peak,
+                                            zscore=df_links_DARs_DEA$zscore,
+                                            pvalue=df_links_DARs_DEA$pvalue,
+                                            p_val.dars=df_links_DARs_DEA$p_val.dars,
+                                            avg_log2FC.dars=df_links_DARs_DEA$avg_log2FC.dars,
+                                            pct.1.dars=df_links_DARs_DEA$pct.1.dars,
+                                            pct.2.dars=df_links_DARs_DEA$pct.2.dars, 
+                                            p_val_adj.dars=df_links_DARs_DEA$p_val_adj.dars,
+                                            cluster=df_links_DARs_DEA$cluster,
+                                            start.peak=df_links_DARs_DEA$start.peak,
+                                            end.peak=df_links_DARs_DEA$end.peak,
+                                            p_val.rna=df_links_DARs_DEA$p_val.rna,
+                                            
+                                            avg_log2FC.rna=df_links_DARs_DEA$avg_log2FC.rna, 
+                                            pct.1.rna=df_links_DARs_DEA$pct.1.rna, 
+                                            pct.2.rna=df_links_DARs_DEA$pct.2.rna, 
+                                            p_val_adj.rna=df_links_DARs_DEA$p_val_adj.rna)
+table(df_links_DARs_DEA$gene=="BCL6",df_links_DARs_DEA$cluster)
+
+```
+
+```{r}
+table(df_links_DARs_DEA$gene=="PRDM1",df_links_DARs_DEA$cluster)
+
+```
+
+
+
+### Funtion to teT CREs of each gene
+
+```{r}
+subsetolap_list_df_CRE<-list()
+subsetolap_list_df_GB<-list()
+
+CREs_function<-function(df_links_DARs_DEA,gr_link){
+  List_genes<-unique(df_links_DARs_DEA$gene)
+  
+  subsetolap_GB<-subsetByOverlaps(gr_link,hg38.gene.annot.2000.GR,type="within")
+ 
+   #saveRDS(subsetolap_GB, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-subsetolap_GB.rds")
+  subsetolap_df_GB<-annoGR2DF(subsetolap_GB)
+
+  hg38<-hg38.gene.annot[complete.cases(hg38.gene.annot),]
+  
+  
+  for (i in seq_along(List_genes)){
+
+                    df_links_DARs_DEA_i<- subset(df_links_DARs_DEA, gene %in%  List_genes[i] )
+                    subsetolap_df_GB_i<- subset(subsetolap_df_GB, gene %in% List_genes[i])
+                    start_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["start_position"]
+                    end_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["end_position"]
+                    strand_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["strand"]
+                    start_peak<-df_links_DARs_DEA[df_links_DARs_DEA$gene==List_genes[i],]["start.peak"]
+                    rownames(start_gene)<-NULL
+
+            # si subset CRE  tiene mas de un linkpeaks se crea un histograma y se guarda en una lista de data frame
+              # cis regulatory elements
+               subsetolap_df_CRE_i<-data.frame(df_links_DARs_DEA_i[!df_links_DARs_DEA_i$peak %in% subsetolap_df_GB_i$peak,])
+               
+                if (nrow(subsetolap_df_CRE_i)!= 0 ){
+                 
+                  
+                  
+                    subsetolap_list_df_CRE[[paste0(List_genes[[i]],"_CRE")]] =
+                      assign(paste0(List_genes[[i]],"_CRE"),
+                             subsetolap_df_CRE_i,
+                             envir=.GlobalEnv)
+                         }
+
+  }
+  
+  
+    return(subsetolap_list_df_CRE)
+                    
+}
+```
+
+```{r}
+arrange.vars <- function(data, vars){
+    ##stop if not a data.frame (but should work for matrices as well)
+    stopifnot(is.data.frame(data))
+
+    ##sort out inputs
+    data.nms <- names(data)
+    var.nr <- length(data.nms)
+    var.nms <- names(vars)
+    var.pos <- vars
+    ##sanity checks
+    stopifnot( !any(duplicated(var.nms)), 
+               !any(duplicated(var.pos)) )
+    stopifnot( is.character(var.nms), 
+               is.numeric(var.pos) )
+    stopifnot( all(var.nms %in% data.nms) )
+    stopifnot( all(var.pos > 0), 
+               all(var.pos <= var.nr) )
+
+    ##prepare output
+    out.vec <- character(var.nr)
+    out.vec[var.pos] <- var.nms
+    out.vec[-var.pos] <- data.nms[ !(data.nms %in% var.nms) ]
+    stopifnot( length(out.vec)==var.nr )
+
+    ##re-arrange vars by position
+    data <- data[ , out.vec]
+    return(data)
+}
+```
+
+
+
+
+
+```{r}
+df_linkpeak_bcl6_prdm1<-rbind(df_links_DARs_DEA[df_links_DARs_DEA$gene=="BCL6",],df_links_DARs_DEA[df_links_DARs_DEA$gene=="PRDM1",])
+list_df_links_CREs<-CREs_function(df_links_DARs_DEA,gr_link)  
+
+#create a dataframe with all the CREs links all genes
+
+df_all_cres_links<- do.call(rbind,list_df_links_CREs)
+
+
+# Changing the order of the peaks columns. we pass the start and the end of each peak to the begging of the table.
+df_all_cres_peaks<-arrange.vars(df_all_cres_links, c("start.peak"=2, "end.peak"=3))
+
+## we delete the start and the end column of links
+df_all_cres_peaks$start<-NULL
+df_all_cres_peaks$end<-NULL
+
+#rename the start and end column of peaks as start and end in order to create a Grange object
+names(df_all_cres_peaks)[c(2,3)]<-c("start","end")
+```
+
+## Percentaje of CRES
+
+```{r}
+pct_cres<-round(((nrow(df_all_cres_peaks)/nrow(df_links_DARs_DEA))*100),2)
+print(paste0("The ", pct_cres, "% of links are CREs"))
+```
+
+## Peaks distances of CREs 
+
+##Create a list of Granges of each gene
+
+***Create a list of Granges of all CREs peaks of each gene**
+
+```{r}
+gr_list_cres_peaks<- makeGRangesListFromDataFrame(df_all_cres_peaks, split.field = "gene",
+                                   names.field = "gene",keep.extra.columns = TRUE)
+
+gr_list_cres_peaks
+
+```
+
+
+```{r}
+rm(list=ls(pattern="_CRE"))
+```
+
+
+# Chromatine States:
+
+  - Active Promoter = E1
+  - Weak Promoter = E3
+  - Poised Promoter = E4
+  - *Strong Enh = E2*
+  - *Strong Enh2 = E6*
+  - *Weak Enh = E5*
+  - Transcription Transition = E7
+  - Transcription Elongation = E9
+  - Weak Transcription = E8
+  - Heterochrom,repressed = E10
+  - Polycomb Repressed = E12
+  - Heterochrom, low signal = E11
+
+```{r eval=FALSE, include=FALSE}
+ActProm<-"#e33230"
+WkProm<-"#f7b9d9"
+StrEnhacer1="#fed266"
+StrEnhacer2="#f17922"
+WkEnhacer="#eae215"
+TxnTrans="#00a04e"
+TXnElong="#00aa4c"
+WkTxn="#caf5cb"
+ProiProm="#7c1dac"
+PolicombRepre="#c6c4c3"
+Het;Rep="#7b7b7b"
+Het;LowSign="#e8e8e8"
+``` 
+
+```{r}
+color_states<-c("#e33230","#f7b9d9","#fed266","#f17922","#eae215","#00a04e","#00aa4c","#caf5cb","#7c1dac","#c6c4c3","#7b7b7b","#e8e8e8")
+```
+
+```{r}
+list_olap_df = list()
+df_states<-matrix()
+df_percentaje<-data.frame()
+dat <- as.data.frame(matrix(ncol=12, nrow=0))
+colnames(dat)<-c("E1","E10","E11","E12","E2","E3","E4","E5","E6","E7","E8","E9")
+
+
+barplot_function<-function(df_table_olap,table_olap,g,name_bcell_pop){
+          
+        gplot<-barplot(table_olap, 
+                main=paste0("Number of peaks in each state in the gene ",g," in ", name_bcell_pop, " population" ),
+                xlab="states",
+                ylab="Count",
+                col="blue",
+                density=10
+                        )
+        
+          return(text(gplot, 0, round(table_olap, 1),cex=1,pos=3))
+    
+}
+
+olap_df_function<-function(chromHMM_GR,gr,gene,cell_type){
+ olap<-subsetByOverlaps(chromHMM_GR,gr,type = "within")
+        df_olap<-annoGR2DF(olap)
+        
+        t<-table(values(olap)[[1]])
+        df_table_olap<-data.frame(t)
+        #print(df_table_olap)
+        
+        total<-sum(df_table_olap$Freq)
+        #print(total)
+        percentajeE6<- round(((df_table_olap[df_table_olap$Var1=="E6",2]/total)*100),2)
+        percentajeE5<- round(((df_table_olap[df_table_olap$Var1=="E5",2]/total)*100),2)
+        percentajeE2<- round(((df_table_olap[df_table_olap$Var1=="E2",2]/total)*100),2)
+        
+        state<-c("E2","E5","E6")
+       
+        
+        sum_percent<-sum(percentajeE2,percentajeE6)
+        
+        if(length(percentajeE6)==0) {
+          percentajeE6<-0
+        }
+        if(length(percentajeE5)==0) {
+          percentajeE5<-0
+        }
+        if(length(percentajeE2)==0) {
+          percentajeE2<-0
+        }
+        
+        percent<-c(percentajeE2,percentajeE5,percentajeE6)
+        length(percent) <- length(state)
+        
+        if (percentajeE6>65 | percentajeE2>65){
+        
+        
+        
+          #if (percentajeE6>65){
+        df_percentaje<-data.frame(state=state,pct=percent,gene=gene,cell_type=cell_type)
+
+
+        return(df_percentaje)
+        }}
+
+olap_df_function_all<-function(chromHMM_GR,gr,gene,cell_type){
+ olap<-subsetByOverlaps(chromHMM_GR,gr,type = "within")
+        df_olap<-annoGR2DF(olap)
+        
+        t<-table(values(olap)[[1]])
+        df_table_olap<-data.frame(t)
+        #print(df_table_olap)
+        
+        total<-sum(df_table_olap$Freq)
+        #print(total)
+        percentajeE6<- round(((df_table_olap[df_table_olap$Var1=="E6",2]/total)*100),2)
+        percentajeE5<- round(((df_table_olap[df_table_olap$Var1=="E5",2]/total)*100),2)
+        percentajeE2<- round(((df_table_olap[df_table_olap$Var1=="E2",2]/total)*100),2)
+        percent<-sum(percentajeE2,percentajeE5,percentajeE6)
+        state<-"E2-E5-E6"
+    
+        if (percentajeE6>80){
+        df_percentaje<-data.frame(state=state,pct=percent,gene=gene,cell_type=cell_type)
+        
+        
+        return(df_percentaje)
+        }
+}
+
+```
+
+
+```{r}
+list_olap_df_gene = list()
+list_olap_df_cell_type = list()
+
+df_states<-matrix()
+df_percentaje<-data.frame()
+list_genes<-unique(names(gr_list_cres_peaks))
+
+
+Listof_StateList_function<-function(gr_list_cres_peaks,chromHMM_GCBC_GR,chromHMM_PC_GR,chromHMM_NBC_GR,chromHMM_MBC_GR,list_genes){
+  
+  gene_names_list<-list_genes
+  cell_types=c("GC","PC","MBC","NBC")
+  
+  for (cell_type in cell_types){
+    
+        for (g in gene_names_list){
+      
+        gr<-gr_list_cres_peaks[[g]]
+        
+        ####### GC ##########
+        if (cell_type=="GC"){
+      
+      
+        df_percentaje<-olap_df_function(chromHMM_GCBC_GR,gr,g,"GC")
+      
+    }
+    
+        ####### PC ##########
+         if (cell_type=="PC"){
+        
+        
+         df_percentaje<-olap_df_function(chromHMM_PC_GR,gr,g,"PC")
+         }
+        
+        ####### MBC ##########
+         if (cell_type=="MBC"){
+        df_percentaje<-olap_df_function(chromHMM_MBC_GR,gr,g,"MBC")
+         }
+        
+        ####### NBC ##########
+         if (cell_type=="NBC"){
+        
+        df_percentaje<-olap_df_function(chromHMM_NBC_GR,gr,g,"NBC")
+         }
+
+        ##cbind all data frame of the g gene
+      #df_percentaje<-rbind(df_percentaje1,df_percentaje2,df_percentaje3,df_percentaje4)
+      list_olap_df_gene[[g]] <-df_percentaje
+        
+        }
+    list_olap_df_cell_type[[cell_type]]<-list_olap_df_gene
+    }
+
+ return(list_olap_df_cell_type)
+    }
+```
+
+
+## Genome Wide
+
+```{r}
+library(tictoc)
+tic()
+Listof_hightpct_states_all<-Listof_StateList_function(gr_list_cres_peaks,chromHMM_GCBC_GR,chromHMM_PC_GR,chromHMM_NBC_GR,chromHMM_MBC_GR,list_genes)
+toc()
+list_all<-list()
+list_all[["NBC"]] <-names(Listof_hightpct_states_all$NBC)
+list_all[["MBC"]]<-names(Listof_hightpct_states_all$MBC)
+list_all[["PC"]]<-names(Listof_hightpct_states_all$PC)
+list_all[["GC"]]<-names(Listof_hightpct_states_all$GC)
+saveRDS(Listof_hightpct_states_all,paste0(general_path,"results/R_objects/22.List_pct_states_celltype_genewide_60_70.rds"))
+
+"BCL6" %in% list_all$GC
+```
+
+```{r}
+"PRDM1" %in% list_all$PC
+```
+
+```{r}
+library(data.table)
+pct_state_all<-list()
+pct_state_all[["GC"]]<-rbindlist(Listof_hightpct_states_all$GC)
+pct_state_all[["PC"]]<-rbindlist(Listof_hightpct_states_all$PC)
+pct_state_all[["MBC"]]<-rbindlist(Listof_hightpct_states_all$MBC)
+pct_state_all[["NBC"]]<-rbindlist(Listof_hightpct_states_all$NBC)
+pct_state_all
+pct_state_all1<-rbindlist(pct_state_all)
+pct_state_all1
+
+```
+
+```{r}
+Listof_hightpct_states_all$PC
+
+```
+```{r}
+Listof_hightpct_states_all$NBC
+
+```
+
+```{r}
+
+color_cluster<-c("#a6cee3", "#b2df8a","#1f78b4", "#33a02c")
+cluster.ids <- c("NBC", "GCBC","MBC","PC")
+
+ labs <- paste0(df_percentaje$pct, "%")
+palette_named = setNames(color_cluster, nm = cluster.ids)
+                    
+```
+
+
+```{r}
+df_numgenes_e6e2_celltype<-data.frame(cell_type=c("NBC","GCBC","MBC","PC"),num_genes=c(length(list_all$NBC),length(list_all$GC),length(list_all$MBC),length(list_all$PC)))
+library(ggplot2)
+
+ggbarplot(df_numgenes_e6e2_celltype,'cell_type','num_genes', 
+                       fill = 'cell_type', 
+                       label = TRUE, 
+                       lab.pos = "out",
+                       lab.col = "black",
+                       #palette = color_states,
+                       # ylim=c(0,60), 
+                    legend = "right",
+          xlab=c("Cell type"),
+          ylab="Number of genes")+
+        scale_fill_manual(values=palette_named)
+
+
+```
+
+```{r echo=FALSE}
+kbl(df_numgenes_e6e2_celltype,caption = "Table of total number of genes with a leat 70% of E6 and 60% of E2") %>%
+  kable_paper("striped", full_width = F)
+```
+```{r echo=FALSE}
+DT::datatable(pct_state_all1,caption = "Table of genes with a leat 70% of E6 and 60% of E2", class = 'cell-border stripe')
+```
+## Genomewide
+
+E6 and E2 > 65%
+
+```{r}
+library(tictoc)
+tic()
+Listof_hightpct_states_all_65<-Listof_StateList_function(gr_list_cres_peaks,chromHMM_GCBC_GR,chromHMM_PC_GR,chromHMM_NBC_GR,chromHMM_MBC_GR,list_genes)
+toc()
+list_all_65<-list()
+list_all_65[["NBC"]] <-names(Listof_hightpct_states_all_65$NBC)
+list_all_65[["MBC"]]<-names(Listof_hightpct_states_all_65$MBC)
+list_all_65[["PC"]]<-names(Listof_hightpct_states_all_65$PC)
+list_all_65[["GC"]]<-names(Listof_hightpct_states_all_65$GC)
+saveRDS(Listof_hightpct_states_all_65,paste0(general_path,"results/R_objects/22.List_pct_states_celltype_genewide_65pct_E6E2.rds"))
+saveRDS(list_all_65,paste0(general_path,"results/R_objects/22.ListofList_namegene_EachCellType_65pct_E6E2.rds"))
+"BCL6" %in% list_all_65$GC
+```
+
+```{r}
+"PRDM1" %in% list_all_65$PC
+```
+
+```{r}
+library(data.table)
+pct_state_all_65<-list()
+pct_state_all_65[["GC"]]<-rbindlist(Listof_hightpct_states_all_65$GC)
+pct_state_all_65[["PC"]]<-rbindlist(Listof_hightpct_states_all_65$PC)
+pct_state_all_65[["MBC"]]<-rbindlist(Listof_hightpct_states_all_65$MBC)
+pct_state_all_65[["NBC"]]<-rbindlist(Listof_hightpct_states_all_65$NBC)
+pct_state_all_65
+pct_state_all_651<-rbindlist(pct_state_all_65)
+pct_state_all_651
+
+```
+
+```{r}
+Listof_hightpct_states_all_65$PC
+
+```
+```{r}
+Listof_hightpct_states_all_65$NBC
+
+```
+
+
+
+
+```{r}
+
+color_cluster<-c("#a6cee3", "#b2df8a","#1f78b4", "#33a02c")
+cluster.ids <- c("NBC", "GCBC","MBC","PC")
+palette_named = setNames(color_cluster, nm = cluster.ids)
+                    
+```
+
+
+```{r}
+dfdf<-data.frame(cell_type=c("NBC","GCBC","MBC","PC"),num_genes=c(length(list_all_65$NBC),length(list_all_65$GC),length(list_all_65$MBC),length(list_all_65$PC)))
+
+
+ggbarplot(dfdf,'cell_type','num_genes', 
+                       fill = 'cell_type', 
+                       label = TRUE, 
+                       lab.pos = "out",
+                       lab.col = "black",
+                       #palette = color_states,
+                       # ylim=c(0,60), 
+                    legend = "right",
+          xlab=c("Cell type"),
+          ylab="Number of genes")+
+        scale_fill_manual(values=palette_named)
+
+
+```
+```{r echo=FALSE}
+kbl(dfdf,caption = "Table of total number of genes with a leat 65% of E6 and 65% of E2") %>%
+  kable_paper("striped", full_width = F)
+```
+## BCL6 & PRDM1
+65% E6
+70% E2
+```{r}
+tic()
+list_gene<-c("PRDM1","BCL6")
+Listof_hight_pct_states_bcl6_prdm1<-Listof_StateList_function(gr_list_cres_peaks,chromHMM_GCBC_GR,chromHMM_PC_GR,chromHMM_NBC_GR,chromHMM_MBC_GR,list_gene)
+toc()
+list_bcl6_prdm1<-list()
+list_bcl6_prdm1[["NBC"]] <-names(Listof_hight_pct_states_bcl6_prdm1$NBC)
+list_bcl6_prdm1[["MBC"]]<-names(Listof_hight_pct_states_bcl6_prdm1$MBC)
+list_bcl6_prdm1[["PC"]]<-names(Listof_hight_pct_states_bcl6_prdm1$PC)
+list_bcl6_prdm1[["GC"]]<-names(Listof_hight_pct_states_bcl6_prdm1$GC)
+
+"BCL6" %in% list_bcl6_prdm1$GC
+
+```
+```{r}
+"PRDM1" %in% list_bcl6_prdm1$PC
+```
+
+```{r}
+dfdf_bcl6_prdm1<-data.frame(cell_type=c("NBC","GCBC","MBC","PC"),num_gene=(c(length(list_bcl6_prdm1$NBC),length(list_bcl6_prdm1$GC),length(list_bcl6_prdm1$MBC),length(list_bcl6_prdm1$PC))))
+library(ggplot2)
+ggplot(dfdf_bcl6_prdm1, aes(x=cell_type, y=num_gene)) + geom_bar(stat="identity") + labs(x="cell type", y="number of genes")
+
+```
+
+
+
+## Main markers
+
+65% E6
+70% E2
+
+```{r}
+
+f<-function(list_gene,list_genes){
+  lis<-c()
+  i=1
+  leng<-length(list_gene)
+    for (i in 1:leng){
+         g<-list_gene[i]
+        if (g %in% list_genes){
+          lis<-c(lis,g)
+          
+        }}
+  return(lis)
+  }
+
+```
+
+```{r}
+tic()
+list_gene<-c("MEF2B", "BCL6","IRF4","PRDM1","SLAMF7", "MZB1", "FKBP11","FCRL4", "FCRL5", "PLAC8", "SOX5","CD27", "TNFRSF13B","TCL1A","IGHD","IGHM","FCER2","CXCR4", "CD83", "MEF2B", "BCL6")
+
+list_gene_new<-f(list_gene,list_genes)
+```
+
+
+```{r}
+tic()
+Listof_hight_pct_states_main_markers<-Listof_StateList_function(gr_list_cres_peaks,chromHMM_GCBC_GR,chromHMM_PC_GR,chromHMM_NBC_GR,chromHMM_MBC_GR,list_gene_new)
+toc()
+list_main_markers<-list()
+list_main_markers[["NBC"]] <-names(Listof_hight_pct_states_main_markers$NBC)
+list_main_markers[["MBC"]]<-names(Listof_hight_pct_states_main_markers$MBC)
+list_main_markers[["PC"]]<-names(Listof_hight_pct_states_main_markers$PC)
+list_main_markers[["GC"]]<-names(Listof_hight_pct_states_main_markers$GC)
+
+"BCL6" %in% list_main_markers$GC
+
+```
+```{r}
+"PRDM1" %in% list_main_markers$PC
+```
+
+```{r}
+df_main_markers<-data.frame(cell_type=c("GC","PC","MBC","NBC"),num_gene=(c(length(list_main_markers$GC),length(list_main_markers$PC),length(list_main_markers$MBC),length(list_main_markers$NBC))))
+library(ggplot2)
+ggplot(df_main_markers, aes(x=cell_type, y=num_gene)) + geom_bar(stat="identity") + labs(x="cell type", y="number of genes")
+
+```
+```{r}
+library(data.table)
+pct_state_main_markers<-list()
+pct_state_main_markers[["GC"]]<-rbindlist(Listof_hight_pct_states_main_markers$GC)
+pct_state_main_markers[["PC"]]<-rbindlist(Listof_hight_pct_states_main_markers$PC)
+pct_state_main_markers[["MBC"]]<-rbindlist(Listof_hight_pct_states_main_markers$MBC)
+pct_state_main_markers[["NBC"]]<-rbindlist(Listof_hight_pct_states_main_markers$NBC)
+pct_state_main_markers_complete<-rbindlist(pct_state_main_markers)
+pct_state_main_markers_complete
+```
+# Function number fo states
+
+  
+  
+
+```{r}
+gr_all_cres_peaks<-unlist(as(gr_list_cres_peaks, "GRangesList"))
+```
+
+
+```{r}
+# ActProm<-"#e33230"
+# WkProm<-"#f7b9d9"
+# StrEnhacer1="#fed266"
+# StrEnhacer2="#f17922"
+# WkEnhacer="#eae215"
+# TxnTrans="#00a04e"
+# TXnElong="#00aa4c"
+# WkTxn="#caf5cb"
+# ProiProm="#7c1dac"
+# PolicombRepre="#c6c4c3"
+# Het;Rep="#7b7b7b"
+# Het;LowSign="#e8e8e8"
+state_fuction<-function(gr_all_cres_peaks,chromHMM_GR,name_bcell_pop){
+    percent<-list()
+    state<-list()
+    olap<-subsetByOverlaps(chromHMM_GR,gr_all_cres_peaks,type = "within")
+    df_olap<-annoGR2DF(olap)
+    
+    table_olap<-table(values(olap)[[1]])
+    df_table_olap<-data.frame(table_olap)
+  
+    print(df_table_olap)
+    
+    total<-sum(df_table_olap$Freq)
+    print(total)
+    percentajeE1<- round(((df_table_olap[df_table_olap$Var1=="E1",2]/total)*100),2)
+    percentajeE2<- round(((df_table_olap[df_table_olap$Var1=="E2",2]/total)*100),2)
+    percentajeE3<- round(((df_table_olap[df_table_olap$Var1=="E3",2]/total)*100),2)
+    percentajeE4<- round(((df_table_olap[df_table_olap$Var1=="E4",2]/total)*100),2)
+    percentajeE5<- round(((df_table_olap[df_table_olap$Var1=="E5",2]/total)*100),2)
+    percentajeE6<- round(((df_table_olap[df_table_olap$Var1=="E6",2]/total)*100),2)
+    percentajeE7<- round(((df_table_olap[df_table_olap$Var1=="E7",2]/total)*100),2)
+    percentajeE8<- round(((df_table_olap[df_table_olap$Var1=="E8",2]/total)*100),2)
+    percentajeE9<- round(((df_table_olap[df_table_olap$Var1=="E9",2]/total)*100),2)
+    percentajeE10<- round(((df_table_olap[df_table_olap$Var1=="E10",2]/total)*100),2)
+    percentajeE11<- round(((df_table_olap[df_table_olap$Var1=="E11",2]/total)*100),2)
+    percentajeE12<- round(((df_table_olap[df_table_olap$Var1=="E12",2]/total)*100),2)
+    
+
+   
+    
+     if(length(percentajeE1)==0 | length(percentajeE2)==0 |length(percentajeE3)==0 | length(percentajeE4)==0 | length(percentajeE5)==0 |length(percentajeE6)==0 | length(percentajeE7)==0 | length(percentajeE8)==0 |length(percentajeE9)==0 | length(percentajeE10)==0 | length(percentajeE11)==0 |length(percentajeE12)==0) {
+          percentajeE1<-0
+          percentajeE2<-0
+          percentajeE3<-0
+          percentajeE4<-0
+          percentajeE5<-0
+          percentajeE6<-0
+          percentajeE7<-0
+          percentajeE8<-0
+          percentajeE9<-0
+          percentajeE10<-0
+          percentajeE11<-0
+          percentajeE12<-0
+        }
+     
+     state<-c("E1","E2","E3","E4","E5","E6","E7","E8","E9","E10","E11","E12")
+     
+    percent<-as.numeric(c(percentajeE1,percentajeE2,percentajeE3,percentajeE4,percentajeE5,percentajeE6,percentajeE7,percentajeE8,percentajeE9,percentajeE10,percentajeE11,percentajeE12))
+
+    df_percentaje<-data.frame(states=state,pct=percent,cell_type=name_bcell_pop)
+    
+    df_state_names<-data.frame(states=state,
+                               states_name=c("ActProm",
+                                            "StrEnhacer1",
+                                            "WkProm",
+                                            "PoiSProm",
+                                            "WkEnhacer",
+                                            "StrEnhacer2",
+                                            "TxnTrans",
+                                            "WkTxn",
+                                            "TXnElong",
+                                            "Het;Rep",
+                                            "Het;LowSign",
+                                            "PolicombRepre"))
+    
+    df_percentaje<-left_join(df_state_names,df_percentaje,by="states")
+    
+    print(df_percentaje)
+    
+
+      color_states<-c("#e33230", #ActProm
+                      "#fed266", #StrEnhacer1
+                      "#f7b9d9", # WkProm
+                      "#7c1dac", #PoiProm
+                      "#eae215", #WkEnhacer
+                      "#f17922", #StrEnhacer2
+                      "#00a04e", #TxnTrans
+                       "#caf5cb", #WkTxn
+                      "#00aa4c", #TXnElong
+                     "#7b7b7b",  #Het;Rep
+                   "#e8e8e8" , #Het;LowSign
+                      "#c6c4c3" # PolicombRepre 
+                   ) 
+      
+       labs <- paste0(df_percentaje$pct, "%")
+       palette_named = setNames(color_states, nm = df_state_names$states_name)
+       
+      gplot<-ggbarplot(df_percentaje,'states_name','pct', 
+                       fill = 'states_name', 
+                     
+                       label = TRUE, 
+                       lab.pos = "out",
+                       lab.col = "black",
+                       #palette = color_states,
+                       ylim=c(0,60), 
+                    legend = "right")+
+        scale_fill_manual(values=palette_named)
+                    
+                    
+     
+      print(gplot)
+      
+      
+ # Pie Chart with Percentages
+   
+  piechar<-ggpie(df_percentaje, "pct",
+   fill = "states_name",
+   color = "white",
+   offset=1.3, 
+  label.size=1,
+   legend = "right",
+  title=paste0("Pie chart of percentaje of link falling in each state in ",name_bcell_pop, " population")
+   )+ 
+    scale_fill_manual(values=palette_named)
+  
+  png(paste0("/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/", 
+             "piechar_", name_bcell_pop,".png"),width = 480, height = 480,res=120)
+  piechar
+  
+  dev.off()
+      
+    print(piechar)
+  
+  return(df_percentaje)
+}
+```
+
+```{r}
+tic()
+Listof_pct_states_NBC<-state_fuction(gr_all_cres_peaks,chromHMM_NBC_GR,"NBC")
+toc()
+
+
+```
+```{r}
+tic()
+Listof_pct_states_GC<-state_fuction(gr_all_cres_peaks,chromHMM_GCBC_GR,"GC")
+toc()
+
+
+```
+```{r}
+tic()
+Listof_pct_states_MBC<-state_fuction(gr_all_cres_peaks,chromHMM_MBC_GR,"MBC")
+toc()
+
+
+```
+```{r}
+tic()
+Listof_pct_states_PC<-state_fuction(gr_all_cres_peaks,chromHMM_PC_GR,"PC")
+toc()
+
+
+```
+# Create a seurat object with all CREs links.
+
+
+
+```{r}
+tonsil_wnn_bcell<-tonsil_wnn_bcell_links_DARs_DEA
+Links(tonsil_wnn_bcell)<-makeGRangesFromDataFrame(df_all_cres_links,
+                                                   keep.extra.columns=FALSE,
+                                                   ignore.strand=FALSE,
+                                                   seqinfo=NULL,
+                                                   seqnames.field=c("seqnames", "seqname","chromosome", 
+                                                                    "chrom","chr","chromosome_name","seqid"),
+                                                   start.field="start",
+                                                   end.field=c("end", "stop"),
+                                                   strand.field="strand",
+                                                   starts.in.df.are.0based=FALSE)
+
+values(Links(tonsil_wnn_bcell))<-DataFrame(score=df_all_cres_links$score,
+                                           gene=df_all_cres_links$gene,
+                                           cluster=df_all_cres_links$cluster,
+                                           peak=df_all_cres_links$peak,
+                                           zscore=df_all_cres_links$zscore,
+                                           pvalue=df_all_cres_links$pvalue,
+                                           p_val.dars=df_all_cres_links$p_val.dars,
+                                           pct.1.dars=df_all_cres_links$pct.1.dars,
+                                           pct.2.dars=df_all_cres_links$pct.2.dars,
+                                           avg_log2FC=df_all_cres_links$avg_log2FC.dars,
+                                           p_val_adj.dars=df_all_cres_links$p_val_adj.dars,
+                                           start.peak=df_all_cres_links$start.peak,
+                                           end.peak=df_all_cres_links$end.peak,
+                                           p_val.rna=df_all_cres_links$p_val.rna,
+                                           pct.1.dars=df_all_cres_links$pct.1.rna,
+                                           pct.2.dars=df_all_cres_links$pct.2.rna,
+                                           avg_log2FC=df_all_cres_links$avg_log2FC.rna,
+                                           p_val_adj.rna=df_all_cres_links$p_val_adj.rna)
+
+```
+
+
+## Coverage plot
+
+**`coverage_extend{r}` is a function that create a coverageplot for a certain gene and region using different upstream and downstream extension region. **
+
+```{r}
+coverage_extend <- function(x,y,seuratobject){purrr::map(y, function(y) {
+  
+  p <- CoveragePlot(
+  object = seuratobject,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = y,
+  extend.downstream = y
+  #tile = TRUE
+  )
+  p
+})}
+```
+
+
+
+```{r}
+
+coverage_extend <- function(x,y,seuratobject){purrr::map(y, function(y) {
+  
+  p <- CoveragePlot(
+  object = seuratobject,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = y,
+  extend.downstream = y,
+  region.highlight = ranges.show
+  #tile = TRUE
+  )
+  p + scale_fill_manual(values ="red")
+
+})}
+```
+
+
+```{r}
+idents.plot <- c("NBC","MBC", "GC","PC")
+```
+```{r}
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+ranges.show$color <- "blue"
+coverage_extend("BCL6",c(0,2000,10000,1e+6),tonsil_wnn_bcell)
+```
+```{r}
+idents.plot <- c("NBC","MBC", "GC","PC")
+```
+```{r}
+
+coverage_extend("BCL6",c(0,2000,10000,1e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA)
+```
+```{r}
+
+coverage_extend("GFI1",c(0,2000,10000,1e+6),tonsil_wnn_bcell_links_DARs_DEA)
+```
+```{r}
+"GFI1" %in% df_links_DARs_DEA$gene
+```
+
+
+```{r eval=FALSE, include=FALSE}
+library("writexl") 
+  
+  
+# saves the dataframe at the specified
+# path
+write_xlsx(df_gc,paste0(general_path,"results/tables/GC_links_DARS_DEA.xlsx"))
+write_xlsx(df_pc,paste0(general_path,"results/tables/PC_links_DARS_DEA.xlsx"))
+write_xlsx(df_mbc,paste0(general_path,"results/tables/MBC_links_DARS_DEA.xlsx"))
+write_xlsx(df_nbc,paste0(general_path,"results/tables/NBC_links_DARS_DEA.xlsx"))
+
+```
+
+
+

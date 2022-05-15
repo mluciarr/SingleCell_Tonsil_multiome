@@ -1,0 +1,916 @@
+---
+title: "LinkPeaks_Analysis_level_1"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+]# Introduction
+
+In this notbook we are going to filter link by DARs and DEA in order to analyse 
+those peak that are deferentially expressed and deferentially accessible
+
+
+# Pre-processing 
+
+## Load package
+
+
+```{r message=FALSE, warning=FALSE}
+library(RColorBrewer)
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+library(harmony)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+library(patchwork)
+library(kableExtra)
+library(tidyverse)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(plyr)
+library(biomaRt)
+library(BiocManager)
+
+library(Repitools)
+set.seed(123)
+```
+
+
+## Parameters
+
+```{r message=FALSE, warning=FALSE}
+# Paths
+path_to_obj_links_DARs_DEA <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/19.tonsil_multiome_bcell_level_1_Genomewide_Linkpeak_DARs_DEA.rds")
+path_to_obj_links <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/19.tonsil_multiome_bcell_level_1_Genwide_Linkpeak.rds")
+path_to_markers<-("~/Documents/multiome_tonsil_Lucia/results/tables/18_tonsil_markers_level_1_namecluster.csv")
+path_to_join_link_DARs_DEA<-  ("~/Documents/multiome_tonsil_Lucia/results/tables/19.df_joint_link_DARs_DEA_level_1_Genwide.csv")
+path_to_join_link_DARs <- ("~/Documents/multiome_tonsil_Lucia/results/tables/19.df_joint_link_DARs_level_1_Genwide.csv")
+path_to_DARs<-("~/Documents/multiome_tonsil_Lucia/results/tables/19.df_DARs_level_1.csv")
+
+figures_folder<-"/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/"
+```
+
+
+
+## Load data
+
+```{r message=FALSE, warning=FALSE}
+tonsil_wnn_bcell_links_DARs_DEA <- readRDS(path_to_obj_links_DARs_DEA)
+tonsil_wnn_bcell_links <- readRDS(path_to_obj_links)
+tonsil_DARs<-read_csv(path_to_DARs)
+tonsil_markers<-read_csv(path_to_markers)
+df_link_DARs<-read_csv(path_to_join_link_DARs)
+df_links_DARs_DEA<- read_csv(path_to_join_link_DARs_DEA)
+```
+
+# UMAP 
+
+## Rename
+
+```{r}
+Idents(tonsil_wnn_bcell_links_DARs_DEA)<-"wsnn_res.0.05"
+new.cluster.ids <- c("NBC","MBC", "GCBC", "GCBC","PC")
+
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell_links_DARs_DEA)
+tonsil_wnn_bcell_links_DARs_DEA <- RenameIdents(tonsil_wnn_bcell_links_DARs_DEA, new.cluster.ids)
+tonsil_wnn_bcell_links_DARs_DEA[["annotation_level_2"]] <- Idents(object = tonsil_wnn_bcell_links_DARs_DEA)
+
+
+
+Idents(tonsil_wnn_bcell_links)<-"wsnn_res.0.05"
+new.cluster.ids <- c("NBC","MBC", "GCBC", "GCBC","PC")
+
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell_links)
+tonsil_wnn_bcell_links <- RenameIdents(tonsil_wnn_bcell_links, new.cluster.ids)
+tonsil_wnn_bcell_links[["annotation_level_2"]] <- Idents(object = tonsil_wnn_bcell_links)
+
+new.level<-c("NBC","GCBC","MBC", "PC")
+tonsil_wnn_bcell_links_DARs_DEA@active.ident <- factor(tonsil_wnn_bcell_links_DARs_DEA@active.ident, levels = new.level)
+
+cluster_color<-setNames(c("#A6CEE3","#B2DF8A", "#1F78B4", "#33A02C"),
+                        levels(tonsil_wnn_bcell_links_DARs_DEA))
+
+tonsil_wnn_bcell_links_DARs_DEA[["annotation_level_2"]] <- Idents(object = tonsil_wnn_bcell_links_DARs_DEA)
+
+DimPlot(tonsil_wnn_bcell_links_DARs_DEA,label = F, reduction = "wnn.umap", pt.size = 0.5,cols = cluster_color) + ggtitle("Joint UMAP")
+```
+# Weight of each methodology
+
+```{r}
+weight.vp<- VlnPlot(tonsil_wnn_bcell_links_DARs_DEA, features = "RNA.weight", group.by = "annotation_level_2",pt.size = 0,cols = c("#a6cee3", "#1f78b4","#b2df8a","#33a02c"))
+p.weight.vp<- VlnPlot(tonsil_wnn_bcell_links_DARs_DEA, features = "peaks.weight", group.by = "annotation_level_2",pt.size = 0,cols = c("#a6cee3", "#1f78b4","#b2df8a","#33a02c"))
+
+weight.vp + ggtitle("RNA modality weight")+ theme(axis.text.x = element_text(angle = 0))+ NoLegend()
+p.weight.vp+ ggtitle("ATAC modality weight")+ theme(axis.text.x = element_text(angle = 0))+ NoLegend()
+```
+
+# Link peaks
+
+```{r}
+
+df_linkpeak<-as.data.frame(Links(tonsil_wnn_bcell_links))
+
+DT::datatable(head(df_linkpeak),caption = "Data frame of all Linkpeaks")
+```
+
+
+
+```{r}
+
+table(df_linkpeak$gene=="BCL6")
+table(df_links_DARs_DEA$gene=="BCL6")
+
+print(paste0("Initial number of links: ", nrow(df_linkpeak)))
+print(paste0("Number of links filtered by DARs: ", nrow(df_link_DARs)))
+
+print(paste0("Number of links filtered by DARs and DEA: ", nrow(df_links_DARs_DEA)))
+
+df_data_steps_links<-data.frame(Ini_peaks=nrow(df_linkpeak),peaks_DARs=nrow(df_link_DARs),peaks_DARs_DEA=nrow(df_links_DARs_DEA))
+
+```
+
+
+```{r echo=FALSE}
+kbl(df_data_steps_links,caption = "Table of total number of initial, filtered links peaks by DARs and DEA") %>%
+  kable_paper("striped", full_width = F) %>%
+  column_spec(3, color = "white",
+              background = "steelblue")%>%
+  
+  add_header_above(c(" ", "Filtered by" = 2))
+```
+
+
+```{r}
+table(df_linkpeak$gene=="BCL6")
+```
+
+
+```{r}
+table(df_link_DARs$gene=="BCL6",df_link_DARs$cluster)
+```
+
+
+```{r}
+table(df_links_DARs_DEA$gene=="BCL6",df_links_DARs_DEA$cluster)
+
+```
+
+```{r}
+table(df_link_DARs$gene=="PRDM1",df_link_DARs$cluster)
+
+```
+
+```{r}
+table(df_links_DARs_DEA$gene=="PRDM1",df_links_DARs_DEA$cluster)
+
+```
+
+
+
+
+
+
+
+## GRanger 
+
+
+```{r message=FALSE, warning=FALSE}
+## more recent data from internet
+ensembl <- useMart(biomart = "ensembl",dataset="hsapiens_gene_ensembl")
+ensembl
+Datasets <- listDatasets(ensembl)
+Datasets[grep("hsapiens_gene_ensembl",Datasets$dataset),] ## hg38 version!!!!!!!!
+hg38.gene.annot <- getBM(attributes = c("ensembl_gene_id","entrezgene_id","hgnc_symbol",
+                                       "chromosome_name","start_position","end_position",
+                                       "strand","band","gene_biotype"
+),
+mart = ensembl
+)
+
+#table(hg38.gene.annot$chromosome_name,exclude=NULL)
+#table(hg38.gene.annot$strand,exclude=NULL)
+
+
+## remove MT, sexual chromosomes and random chr. Arrange also strand info.
+hg38.gene.annot <- hg38.gene.annot[which(hg38.gene.annot$chromosome_name %in% paste0(1:22)),]
+hg38.gene.annot$chromosome_name <- paste0("chr",hg38.gene.annot$chromosome_name)
+hg38.gene.annot$strand[which(hg38.gene.annot$strand==1)] <- "+"
+hg38.gene.annot$strand[which(hg38.gene.annot$strand=="-1")] <- "-"
+table(hg38.gene.annot$chromosome_name,exclude=NULL)
+table(hg38.gene.annot$strand,exclude=NULL)
+#head(hg38.gene.annot);dim(hg38.gene.annot)
+
+
+##polish gene annotation
+any(is.na(hg38.gene.annot$ensembl_gene_id))
+any(hg38.gene.annot$ensembl_gene_id=="")
+any(is.na(hg38.gene.annot$entrezgene_id))
+any(na.omit(hg38.gene.annot$entrezgene_id)=="")
+any(is.na(hg38.gene.annot$hgnc_symbol))
+any(hg38.gene.annot$hgnc_symbol=="")
+hg38.gene.annot$hgnc_symbol[which(hg38.gene.annot$hgnc_symbol=="")] <- NA
+
+##make GRange object
+hg38.gene.annot.GR <- GRanges(seqnames = hg38.gene.annot$chromosome_name,
+                             ranges = IRanges(hg38.gene.annot$start_position,end = hg38.gene.annot$end_position),
+                             strand = hg38.gene.annot$strand
+)
+mcols(hg38.gene.annot.GR) <- hg38.gene.annot[,grep("^chromosome_name$|^start_position$|^end_position|^strand$$",colnames(hg38.gene.annot),value = T,invert = T)]
+hg38.gene.annot.GR <- sort(sortSeqlevels(hg38.gene.annot.GR))
+#hg38.gene.annot.GR
+
+## Extend 2,000bps upstream of promoters
+hg38.gene.annot.2000.GR <- punion(promoters(x = hg38.gene.annot.GR,upstream = 2000,downstream = 0),
+                                 hg38.gene.annot.GR
+)
+
+#saveRDS(hg38.gene.annot.GR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-hg38.gene.annot.GR.rds")
+#saveRDS(hg38.gene.annot.2000.GR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-hg38.gene.annot.2000.GR.rds")
+## add metadata of the genes names 
+
+values(hg38.gene.annot.GR) <- DataFrame(hgnc_symbol = hg38.gene.annot$hgnc_symbol)
+ranges(hg38.gene.annot.GR[(elementMetadata(hg38.gene.annot.GR)[,1] %in% df_links_DARs_DEA$gene
+                    )])
+```
+
+**From dataframe to Granges**
+
+```{r}
+gr_link<-GRanges(seqnames = df_links_DARs_DEA$seqnames, ranges = IRanges(start=df_links_DARs_DEA$start,end = df_links_DARs_DEA$end),strand = df_links_DARs_DEA$strand)
+values(gr_link)<-DataFrame(
+                                            strand=df_links_DARs_DEA$strand,
+                                            score=df_links_DARs_DEA$score,
+                                            gene=df_links_DARs_DEA$gene,
+                                            peak=df_links_DARs_DEA$peak,
+                                            zscore=df_links_DARs_DEA$zscore,
+                                            pvalue=df_links_DARs_DEA$pvalue,
+                                            p_val.dars=df_links_DARs_DEA$p_val.dars,
+                                            avg_log2FC.dars=df_links_DARs_DEA$avg_log2FC.dars,
+                                            pct.1.dars=df_links_DARs_DEA$pct.1.dars,
+                                            pct.2.dars=df_links_DARs_DEA$pct.2.dars, 
+                                            p_val_adj.dars=df_links_DARs_DEA$p_val_adj.dars,
+                                            cluster=df_links_DARs_DEA$cluster,
+                                            start.peak=df_links_DARs_DEA$start.peak,
+                                            end.peak=df_links_DARs_DEA$end.peak,
+                                            p_val.rna=df_links_DARs_DEA$p_val.rna,
+                                            
+                                            avg_log2FC.rna=df_links_DARs_DEA$avg_log2FC.rna, 
+                                            pct.1.rna=df_links_DARs_DEA$pct.1.rna, 
+                                            pct.2.rna=df_links_DARs_DEA$pct.2.rna, 
+                                            p_val_adj.rna=df_links_DARs_DEA$p_val_adj.rna)
+table(df_links_DARs_DEA$gene=="BCL6",df_links_DARs_DEA$cluster)
+
+```
+
+```{r}
+table(df_link_DARs$gene=="BCL6",df_link_DARs$cluster)
+
+```
+
+
+Find 'findOverlapsn {r}' in the gene body
+```{r}
+olap_gb<-findOverlaps(gr_link,hg38.gene.annot.GR,type="within")
+olap_gb
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+List_genes<-unique(Links(tonsil_wnn_bcell_links_DARs_DEA)$gene)
+
+List_genes<-unique(df_linkpeak$gene)
+
+subsetolap_GB<-subsetByOverlaps(gr_link,hg38.gene.annot.GR,type="within")
+subsetolap_GB
+#saveRDS(subsetolap_GB, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-subsetolap_GB.rds")
+subsetolap_df_GB<-annoGR2DF(subsetolap_GB)
+subsetolap_df_GB
+
+subsetolap_df_CRE<-data.frame(df_links_DARs_DEA[!df_links_DARs_DEA$peak %in% subsetolap_df_GB$peak,])
+gghistogram(subsetolap_df_CRE$width, bins = 30)
+
+
+subsetolap_df_CRE_bcl6<- subset(subsetolap_df_CRE, gene   %in% "BCL6")
+subsetolap_df_GB_bcl6<- subset(subsetolap_df_GB, gene   %in% "BCL6")
+
+gghistogram(subsetolap_df_CRE_bcl6$width, bins = 30)
+gghistogram(subsetolap_df_GB_bcl6$width, bins = 30)
+
+head(subsetolap_df_CRE)
+dim(df_links_DARs_DEA)
+dim(subsetolap_df_GB)
+dim(subsetolap_df_CRE)
+```
+
+** Funtion create a 
+```{r}
+subsetolap_list_df_CRE<-list()
+subsetolap_list_df_GB<-list()
+
+f<-function(df_links_DARs_DEA,gr_link){
+List_genes<-unique(df_links_DARs_DEA$gene)
+
+subsetolap_GB<-subsetByOverlaps(gr_link,hg38.gene.annot.2000.GR,type="within")
+subsetolap_GB
+#saveRDS(subsetolap_GB, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-subsetolap_GB.rds")
+subsetolap_df_GB<-annoGR2DF(subsetolap_GB)
+subsetolap_df_GB
+
+## cis regulatory elements
+subsetolap_df_CRE<-data.frame(df_links_DARs_DEA[!df_links_DARs_DEA$peak %in% subsetolap_df_GB$peak,])
+
+#
+hg38<-hg38.gene.annot[complete.cases(hg38.gene.annot),]
+
+
+for (i in seq_along(List_genes)){
+    
+                  subsetolap_df_CRE_i<- subset(subsetolap_df_CRE, gene %in%  List_genes[i] )
+                  subsetolap_df_GB_i<- subset(subsetolap_df_GB, gene %in% List_genes[i])
+                  start_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["start_position"]
+                  end_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["end_position"]
+                  strand_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["strand"]
+                  start_peak<-df_links_DARs_DEA[df_links_DARs_DEA$gene==List_genes[i],]["start.peak"]
+                  rownames(start_gene)<-NULL
+                  
+                  for (j in seq_along(start_peak)){
+                    
+                    # si es un un gene downregulated
+                  
+                      if (strand_gene[j]=="-"){
+                        
+                        if(start_gene>start_peak[[1]][j]){
+                        length_gene<-end_gene-start_gene
+                        subsetolap_df_CRE_i$width[j]<--(subsetolap_df_CRE_i$width[j]-length_gene)
+                        }
+                        
+                          
+                      }
+                        else {
+                          if(start_gene<start_peak[[1]][j]){
+                        length_gene<-end_gene-start_gene
+                        subsetolap_df_CRE_i$width[j]<-(subsetolap_df_CRE_i$width[j]-length_gene)
+                        }
+                    }
+                  }
+          # si subset CRE  tiene mas de un linkpeaks se crea un histograma y se guarda en una lista de data frame
+                if (nrow(subsetolap_df_CRE_i)!= 0 ){
+                  h<-gghistogram(subsetolap_df_CRE_i$width, 
+                                  bins =10,
+                                  xlab = "Peak width (kb)",
+                                  ylab = "Number of peaks",
+                                 add_density = TRUE,
+                                  title = paste0(List_genes[[i]],
+                                                 "_CRE"))
+                
+                 print(h)
+                 
+                  subsetolap_list_df_CRE[[paste0(List_genes[[i]],"_CRE")]] = assign(paste0(List_genes[[i]],"_CRE"), 
+                                                                                    subsetolap_df_CRE_i, 
+                                                                                    envir=.GlobalEnv)
+                  }
+                  if (nrow(subsetolap_df_GB_i)!= 0 ) {      
+                    subsetolap_list_df_GB[[paste0(List_genes[[i]],"_GB")]]
+                    assign(paste0(List_genes[[i]],"_GB"), 
+                                                                                    subsetolap_df_GB_i, 
+                                                                                    envir=.GlobalEnv)
+                  print( gghistogram(subsetolap_df_GB_i$width,  y = "stat(density)",
+                                     bins =100 ,
+                                     xlab = "Peak width (kb)",
+                                     ylab = "Number of peaks",
+                                     add_density = TRUE,
+                                     title = paste0(List_genes[[i]],
+                                                    "_GB")))
+                  }
+
+                                        } 
+  return(c(subsetolap_list_df_CRE,subsetolap_list_df_GB))
+}
+```
+
+
+
+
+```{r}
+subsetolap_list_df_CRE<-list()
+subsetolap_list_df_GB<-list()
+
+f<-function(df_links_DARs_DEA,gr_link){
+    List_genes<-unique(df_links_DARs_DEA$gene)
+    
+    subsetolap_GB<-subsetByOverlaps(gr_link,hg38.gene.annot.2000.GR,type="within")
+    subsetolap_GB
+    #saveRDS(subsetolap_GB, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-subsetolap_GB.rds")
+    subsetolap_df_GB<-annoGR2DF(subsetolap_GB)
+    subsetolap_df_GB
+    
+    ## cis regulatory elements
+    subsetolap_df_CRE<-data.frame(df_links_DARs_DEA[!df_links_DARs_DEA$peak %in% subsetolap_df_GB$peak,])
+    
+    #
+    hg38<-hg38.gene.annot[complete.cases(hg38.gene.annot),]
+
+
+    for (i in seq_along(List_genes)){
+    
+                  subsetolap_df_CRE_i<- subset(subsetolap_df_CRE, gene %in%  List_genes[i] )
+                  subsetolap_df_GB_i<- subset(subsetolap_df_GB, gene %in% List_genes[i])
+                  start_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["start_position"]
+                  start_gene<-start_gene$start_position
+                  end_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["end_position"]
+                  end_gene<-end_gene$end_position
+                  strand_gene<-hg38[hg38$hgnc_symbol==List_genes[i],]["strand"]
+                  strand_gene<-strand_gene$strand
+                  start_peak<-subsetolap_df_CRE_i$start.peak
+                  rownames(start_gene)<-NULL
+                  
+                  print(paste0("gene name: ",List_genes[i]))
+                  if (nrow(subsetolap_df_CRE_i)!= 0 ){
+
+
+                    for (j in seq_along(start_peak)){
+                      print((paste0("lengh of start peak list: ",length(start_peak))))
+                      
+                    # si es un un gene downregulated
+
+                      if (strand_gene=="-"){
+                        
+                       
+                        print((paste0("start peak: ",start_peak[j])))
+                        print((paste0("start gene: ",start_gene)))
+                        
+                        if(start_gene >start_peak[j]){
+                        length_gene<-end_gene-start_gene
+                        subsetolap_df_CRE_i$width[j]<--(subsetolap_df_CRE_i$width[j]-length_gene)
+                        }
+
+
+                      }
+                        else {
+                          if(start_gene<start_peak[j]){
+                        length_gene<-end_gene-start_gene
+                        subsetolap_df_CRE_i$width[j]<-(subsetolap_df_CRE_i$width[j]-length_gene)
+                        }
+                    }
+                    }
+                    h<-gghistogram(subsetolap_df_CRE_i$width,
+                                  bins =10,
+                                  xlab = "Peak width (kb)",
+                                  ylab = "Number of peaks",
+                                 add_density = TRUE,
+                                  title = paste0(List_genes[[i]],
+                                                 "_CRE"))
+
+                 print(h)
+
+                  subsetolap_list_df_CRE[[paste0(List_genes[[i]],"_CRE")]] =
+                    assign(paste0(List_genes[[i]],"_CRE"),
+                           subsetolap_df_CRE_i,
+                           envir=.GlobalEnv)
+                  }
+          # si subset CRE  tiene mas de un linkpeaks se crea un histograma y se guarda en una lista de data frame
+                  if (nrow(subsetolap_df_GB_i)!= 0 ) {
+                    subsetolap_list_df_GB[[paste0(List_genes[[i]],"_GB")]] =
+                    assign(paste0(List_genes[[i]],"_GB"), subsetolap_df_GB_i,  envir=.GlobalEnv)
+
+                  print( gghistogram(subsetolap_df_GB_i$width,
+                                     bins =100 ,
+                                     xlab = "Peak width (kb)",
+                                     ylab = "Number of peaks",
+                                     add_density = TRUE,
+                                     title = paste0(List_genes[[i]],
+                                                    "_GB")))
+                  }
+
+                                        }#for each gene
+  return(c(subsetolap_list_df_CRE,subsetolap_list_df_GB))
+}
+```
+
+
+
+```{r}
+df_linkpeak_bcl6_prdm1<-rbind(df_links_DARs_DEA[df_links_DARs_DEA$gene=="BCL6",],df_links_DARs_DEA[df_links_DARs_DEA$gene=="PRDM1",])
+subsetolap_list_df_bcl6_prdm1<-f(df_linkpeak_bcl6_prdm1,gr_link)  
+#subsetolap_list_df<-f(df_linkpeak,gr_link)                  
+
+```
+
+# Number of genes
+
+```{r}
+List_genes<-unique(df_links_DARs_DEA$gene)
+
+print(paste0("**** There are ",length(List_genes)," genes *****"))
+
+```
+
+
+# DARs
+
+```{r}
+DT::datatable(tonsil_DARs,caption = "Table of the DARs", class = 'cell-border stripe')
+```
+
+```{r}
+kbl(head(tonsil_DARs),caption = "Table of the join of the all links peaks and the DARs") %>%
+  kable_paper("striped", full_width = F)
+```
+
+# DEA
+
+```{r}
+DT::datatable(df_links_DARs_DEA,caption = "Table of the filtered links peaks by DARs and GEx", class = 'cell-border stripe')
+```
+
+```{r}
+kbl(head(df_links_DARs_DEA),caption = "Table of the filtered links peaks by DARs and GEx") %>%
+  kable_paper("striped", full_width = F)
+```
+
+## bcl6 
+
+```{r}
+bcl6<-df_links_DARs_DEA[df_links_DARs_DEA$gene=="BCL6",]
+
+
+table(bcl6$gene=="BCL6",bcl6$cluster)
+
+prdm1<-df_links_DARs_DEA[df_links_DARs_DEA$gene=="PRDM1",]
+
+table(prdm1$gene=="PRDM1",prdm1$cluster)
+
+
+bcl6_prdm1<- rbind(bcl6,prdm1)
+
+tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1<-tonsil_wnn_bcell_links_DARs_DEA
+
+Links(tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)<-makeGRangesFromDataFrame(bcl6_prdm1,
+keep.extra.columns=FALSE,
+ignore.strand=FALSE,
+seqinfo=NULL,
+seqnames.field=c("seqnames", "seqname","chromosome",
+"chrom","chr","chromosome_name","seqid"),
+start.field="start",
+end.field=c("end", "stop"),
+strand.field="strand",
+starts.in.df.are.0based=FALSE)
+
+values(Links(tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1))<-DataFrame(score=bcl6_prdm1$score,
+gene=bcl6_prdm1$gene,
+cluster=bcl6_prdm1$cluster,
+peak=bcl6_prdm1$peak,
+zscore=bcl6_prdm1$zscore,
+pvalue=bcl6_prdm1$pvalue,
+p_val.dars=bcl6_prdm1$p_val.dars,
+pct.1.dars=bcl6_prdm1$pct.1.dars,
+pct.2.dars=bcl6_prdm1$pct.2.dars,
+avg_log2FC.dars=bcl6_prdm1$avg_log2FC.dars,
+start.peak=bcl6_prdm1$start.peak,
+end.peak=bcl6_prdm1$end.peak,
+p_val.rna=bcl6_prdm1$p_val.rna,
+avg_log2FC.rna=bcl6_prdm1$avg_log2FC.rna,
+pct.1.rna=bcl6_prdm1$pct.1.rna,
+pct.2.rna=bcl6_prdm1$pct.2.rna,
+p_val_adj.rna=bcl6_prdm1$p_val_adj.rna)
+
+table(bcl6_prdm1$gene=="BCL6",bcl6_prdm1$cluster)
+```
+
+
+# Coverage plots
+
+```{r}
+
+coverage_extend <- function(x,y,seuratobject){purrr::map(y, function(y) {
+  
+  p <- CoveragePlot(
+  object = seuratobject,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = y,
+  extend.downstream = y,
+  region.highlight = ranges.show
+  #tile = TRUE
+  )
+
+
+p & scale_fill_manual(values = cols_cluster)
+
+})}
+```
+
+
+
+```{r}
+idents.plot <- c("NBC","GCBC", "MBC", "PC")
+```
+
+
+```{r}
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+
+coverage_extend("BCL6",1e+6,tonsil_multiome_bcells_Linkpeaks_bcl6_prdm1)
+
+p
+
+```
+
+## PDF
+
+```{r}
+ranges.show <- StringToGRanges(c('chr3-187721377-187745725','chr3-187872862-188000000'))
+cols_cluster <- c("#a6cee3", "#1f78b4","#b2df8a","#33a02c","#e31a1c")
+
+library(ggrastr)
+#rasterize(p, dpi = 300)
+p <- CoveragePlot(
+object = tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1,
+region = "BCL6",
+features = "BCL6",
+expression.assay = "RNA",
+idents = idents.plot,
+extend.upstream = 1e+6,
+extend.downstream = 1e+6,
+region.highlight = ranges.show
+#tile = TRUE
+)
+pdf(paste("/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/
+", "bcl6_coverage_plot.pdf", sep=""),width=10,height=6)
+
+
+
+p & scale_fill_manual(values = cluster_color)
+dev.off()
+```
+```{r}
+p & scale_fill_manual(values = cluster_color)
+```
+```{r}
+ranges.show <- StringToGRanges(c('chr3-187721377-187745725','chr3-187872862-188000000'))
+
+library(ggrastr)
+#rasterize(p, dpi = 300)
+p <- CoveragePlot(
+object = tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1,
+region="chr3-187721377-187745725",
+features = "BCL6",
+expression.assay = "RNA",
+idents = idents.plot
+#region.highlight = ranges.show
+#tile = TRUE
+)
+pdf(paste("/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/
+", "bcl6_coverage_plot_genebody.pdf", sep=""),width=10,height=6)
+
+
+
+p & scale_fill_manual(values = cluster_color)
+dev.off()
+```
+```{r}
+p & scale_fill_manual(values = cluster_color)
+```
+
+```{r}
+ranges.show <- StringToGRanges("chr6-105993463-106109939")
+cols_cluster <- c("#a6cee3", "#1f78b4","#b2df8a",  
+             "#33a02c","#e31a1c")
+coverage_extend("PRDM1",c(0,2000,10000,1e+6,1e+7),tonsil_multiome_bcells_Linkpeaks_bcl6_prdm1)
+```
+
+
+```{r}
+DefaultAssay(tonsil_wnn_bcell_links_DARs_DEA)<-"ATAC"
+ranges.show <- StringToGRanges("chr1-87057247-87058226")
+ranges.show$color <- "blue"
+coverage_extend("AURKAIP1",1e+7,tonsil_wnn_bcell_links_DARs_DEA)
+```
+
+```{r}
+link_plot <- LinkPlot(
+  object = tonsil_wnn_bcell_links_DARs_DEA,
+  region = "chr1-1000000-4900000"
+)
+link_plot + scale_color_viridis_c()
+```
+
+
+```{r}
+coverage_extend("BCL6",c(0,2000,1e+4,1e+5,1e+6),tonsil_wnn_bcell_links)
+```
+```{r}
+df_link_DARs1<-data.frame(Links(tonsil_wnn_bcell_links_DARs))
+coverage_extend("BCL6",0,tonsil_wnn_bcell_links_DARs)
+```
+
+```{r}
+regions <- c('chr3-187721377-187745725','chr3-187872862-188000000')
+#StringToGRanges(regions = regions)
+ranges.show <- StringToGRanges(regions = regions)
+coverage_extend("BCL6",c(1e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+```
+```{r}
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+coverage_extend("BCL6",c(0,2000,1e+4,1e+5,1e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+p<-CoveragePlot(
+  object = tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1,
+  #region.highlight = ranges.show,
+  region="chr3-187872862-188000000",
+  #features = "BCL6",
+  expression.assay = "RNA",
+  idents = idents.plot
+  #extend.upstream = 1e+6,
+  #extend.downstream = 1e+6
+  #tile = TRUE
+  )
+p & scale_fill_manual(values = cluster_color)
+```
+
+
+```{r}
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+CoveragePlot(
+  object = tonsil_wnn_bcell_links,
+  region.highlight = ranges.show,
+  region="BCL6",
+  features = "BCL6",
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 1e+6,
+  extend.downstream = 1e+6
+  #tile = TRUE
+  )
+```
+```{r}
+ranges.show$color <- "orange"
+CoveragePlot(
+  object = tonsil_wnn_bcell_links_DARs_DEA,
+  region.highlight = ranges.show,
+  region="BCL6",
+  features = "BCL6",
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 1e+6,
+  extend.downstream = 1e+6
+  #tile = TRUE
+  )
+```
+
+```{r}
+peak_plot <- PeakPlot(
+  object = tonsil_wnn_bcell_links_DARs_DEA,
+  region = "chr3-187750000-188750000"
+)
+peak_plot
+```
+
+
+
+```{r}
+coverage_extend("PRDM1",c(0,2000,1e+4,1e+5,1e+6),tonsil_wnn_bcell_links)
+
+```
+
+```{r}
+ranges.show <- StringToGRanges("chr6-105993463-106109939")
+coverage_extend("PRDM1",c(5e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+```
+
+
+# Tables 
+
+Here we can see the comparison of how many links are in each cluster and how
+we filter specifics peaks that are DA and belongs to DE genes of each cluster.
+
+Doing so we can know which links are cause by a cluster. 
+
+
+```{r}
+table(df_links_DARs_DEA$gene=="BCL6",df_links_DARs_DEA$cluster)
+
+```
+
+```{r}
+table(df_link_DARs$gene=="BCL6",df_link_DARs$cluster)
+```
+
+
+
+## Peak distances
+
+```{r}
+gr_peaks<-GRanges(seqnames = df_links_DARs_DEA$seqnames, ranges = IRanges(start=as.numeric(df_links_DARs_DEA$start.peak),end = as.numeric(df_links_DARs_DEA$end.peak)),strand = df_links_DARs_DEA$strand)
+values(gr_peaks)<-DataFrame(
+                                            strand=df_links_DARs_DEA$strand,
+                                            score=df_links_DARs_DEA$score,
+                                            gene=df_links_DARs_DEA$gene,
+                                            peak=df_links_DARs_DEA$peak,
+                                            zscore=df_links_DARs_DEA$zscore,
+                                            pvalue=df_links_DARs_DEA$pvalue,
+                                            p_val.dars=df_links_DARs_DEA$p_val.dars,
+                                            avg_log2FC.dars=df_links_DARs_DEA$avg_log2FC.dars,
+                                            pct.1.dars=df_links_DARs_DEA$pct.1.dars,
+                                            pct.2.dars=df_links_DARs_DEA$pct.2.dars, 
+                                            p_val_adj.dars=df_links_DARs_DEA$p_val_adj.dars,
+                                            cluster=df_links_DARs_DEA$cluster,
+                                            start.peak=df_links_DARs_DEA$start.peak,
+                                            end.peak=df_links_DARs_DEA$end.peak,
+                                            p_val.rna=df_links_DARs_DEA$p_val.rna,
+                                            
+                                            avg_log2FC.rna=df_links_DARs_DEA$avg_log2FC.rna, 
+                                            pct.1.rna=df_links_DARs_DEA$pct.1.rna, 
+                                            pct.2.rna=df_links_DARs_DEA$pct.2.rna, 
+                                            p_val_adj.rna=df_links_DARs_DEA$p_val_adj.rna
+                                            )
+table(df_links_DARs_DEA$gene=="BCL6",df_links_DARs_DEA$cluster)
+```
+
+```{r}
+gr_peaks[gr_peaks$gene=="BCL6",]
+```
+
+```{r}
+gaps_gr_peaks_bcl6<-gaps(gr_peaks[gr_peaks$gene=="BCL6",])
+values(gaps_gr_peaks_bcl6)<-(width(gaps_gr_peaks_bcl6))<1000
+```
+
+## bcl6 
+
+
+```{r}
+
+coverage_extend <- function(x,y,seuratobject){purrr::map(y, function(y) {
+p <- CoveragePlot(object = seuratobject, region = x, features = x, expression.assay = "RNA", idents = idents.plot, extend.upstream = y, extend.downstream = y, region.highlight = ranges.show
+#tile = TRUE
+)
+p & scale_fill_manual(values = cols_cluster)
+})}
+
+
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+cols_cluster <- c("#a6cee3", "#1f78b4","#b2df8a",
+"#33a02c","#e31a1c")
+coverage_extend("BCL6",c(1e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+
+coverage_extend("PRDM1",c(5e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+ranges.show <- StringToGRanges("chr6-105993463-106109939")
+coverage_extend("PRDM1",c(5e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+coverage_extend("BCL6",c(0,2000,1e+4,1e+5,1e+6,1e+7),tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1)
+ranges.show <- StringToGRanges("chr3-187721377-187745725")
+
+
+
+
+tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1 <- LinkPeaks(
+object = tonsil_wnn_bcell_links_DARs_DEA_bcl6_prdm1,
+peak.assay = "ATAC",
+expression.assay = "RNA",
+expression.assay = "RNA",
+genes.use = c("BCL6","PRDM1"),
+distance = 1e+8
+)
+
+```
+
+## PDF
+
+```{r}
+library(ggrastr)
+rasterize(p, dpi = 300)
+
+p <- DimPlot(seurat)
+pdf(paste(figures_folder, "UMAP.pdf", sep=""),width=5,height=5,paper='special')
+p
+dev.off()
+```
+
+
+
+
+# Session info
+
+```{r}
+sessionInfo()
+```

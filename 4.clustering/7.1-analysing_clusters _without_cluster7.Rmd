@@ -1,0 +1,529 @@
+---
+title: "6-Analysing clusters without Doublets"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load packages
+
+
+```{r message=FALSE, warning=FALSE}
+library("RColorBrewer")
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+#library(SeuratWrappers)
+library(harmony)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(kableExtra)
+library(tidyverse)
+
+set.seed(173)
+```
+
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/12.tonsil_multiome_without_cluster6n7_doublets_normalized.rds")
+
+path_to_markers<-here::here("~/Documents/multiome_tonsil_Lucia/results/tables/tonsil_markers_075_nocluster6n7.csv")
+# Thresholds
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_without_cluster7 <- readRDS(path_to_obj)
+
+tonsil_markers_05<-read_csv(path_to_markers)
+```
+
+### Get top n markers of each cluster
+
+
+**Resolution 0.05**
+ 
+```{r}
+tonsil_markers_05 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC) %>% write.csv(.,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "top10_tonsil_markers_no_doublets_05.csv"))
+
+tonsil_markers_05 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC) %>% write.csv(.,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "top5_tonsil_markers_no_doublets_05.csv"))
+
+
+top5_tonsil_markers_05<-tonsil_markers_05 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+top7_tonsil_markers_05<-tonsil_markers_05 %>% group_by(cluster) %>% top_n(n = 7, wt = avg_log2FC)
+
+top10_tonsil_markers_05<-tonsil_markers_05 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+```
+
+```{r}
+df_top5<-as.data.frame(top5_tonsil_markers_05)
+kbl(df_top5,caption = "Table of the top 5 marker of each cluster resolution 0.005") %>%
+  kable_paper("striped", full_width = F)
+```
+
+```{r}
+df_top7<-as.data.frame(top7_tonsil_markers_05)
+df_mark<-as.data.frame(tonsil_markers_05)
+kbl(df_top7,caption = "Table of the top 5 marker of each cluster resolution 0.005") %>%
+  kable_paper("striped", full_width = F)
+```
+
+
+```{r}
+#install.packages("htmlwidgets", type = "binary")
+#install.packages("DT", type = "binary")
+
+DT::datatable(df_top7)
+
+```
+```{r}
+DT::datatable(df_mark)
+
+```
+```{r}
+markerGenes <- unique(tonsil_markers_05$gene)
+
+geneSym <- ifelse(test = !grepl('NA', markerGenes), 
+             yes = sub('.*?-', '', markerGenes),
+             no = sub('-.*', '', markerGenes))
+
+
+dot.10 <- DotPlot(tonsil_wnn_without_cluster7, features = unique(top10_tonsil_markers_05$gene),cols = 'RdBu', cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8)) + scale_x_discrete(labels= geneSym)+ggtitle("res 0.05 top 10 of each cluster")
+
+dot.5 <- DotPlot(tonsil_wnn_without_cluster7, features = unique(top5_tonsil_markers_05$gene),cols = 'RdBu', cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8)) + scale_x_discrete(labels= geneSym)+ggtitle("res 0.05 top 5 of each cluster")
+
+```
+
+```{r}
+dot.10 +
+  coord_flip() +
+  theme(axis.title = element_blank(), axis.text.y = element_text(size = 5))
+dot.5 +
+  coord_flip() +
+  theme(axis.title = element_blank(), axis.text.y = element_text(size = 7))
+```
+```{r}
+top7mark_cluster0<-top7_tonsil_markers_05[["gene"]][1:7]
+top7mark_cluster1<-top7_tonsil_markers_05[["gene"]][8:14]
+top7mark_cluster2<-top7_tonsil_markers_05[["gene"]][15:21]
+top7mark_cluster3<-top7_tonsil_markers_05[["gene"]][22:28]
+top7mark_cluster4<-top7_tonsil_markers_05[["gene"]][29:35]
+top7mark_cluster5<-top7_tonsil_markers_05[["gene"]][36:42]
+top7mark_cluster6<-top7_tonsil_markers_05[["gene"]][43:49]
+top7mark_cluster7<-top7_tonsil_markers_05[["gene"]][50:56]
+
+```
+
+
+
+# Markers exploration
+```{r}
+markers_gg <- function(x){purrr::map(x, function(x) {
+  
+  p <- FeaturePlot(
+    tonsil_wnn_without_cluster7,
+    features = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1
+  )
+  p
+})}
+```
+
+```{r}
+m<-c("PRDM1","XBP1","IRF4","MEF2B","BCL6")
+
+DZ<-c("SUGCT", "CXCR4", "AICDA")
+
+LZ<- c("CD83","BCL2A1")
+
+GC<- c("MEF2B", "BCL6","IRF4")
+
+PC<- c("PRDM1","SLAMF7", "MZB1", "FKBP11")
+
+```
+
+
+## cluster 0; memory and naive b cells 
+
+
+
+```{r}
+markers_gg(top7mark_cluster0)
+```
+```{r}
+naive_markers<-c("CD79A", "CD79B", "BLNK")
+memory_markers<-c("CD27")
+
+```
+
+```{r}
+markers_gg(naive_markers)
+```
+
+```{r}
+markers_gg(memory_markers)
+
+```
+
+```{r}
+markers_gg(c("MS4A1","NT5E"))
+```
+
+## cluster 1: naive CD4 T-celL
+
+IL6ST: naive CD4 T-cel
+
+CCR7, CD62L, and CD45RA
+```{r}
+cd4<- c("CCR7")
+```
+
+```{r}
+markers_gg(top7mark_cluster1)
+```
+```{r}
+markers_gg(cd4)
+```
+
+## cluster 2: GC, DZ
+
+
+```{r}
+markers_gg(top7mark_cluster2)
+```
+
+```{r}
+markers_gg(GC)
+
+```
+
+```{r}
+markers_gg(DZ)
+
+```
+
+## cluster 3: GC, LZ
+
+```{r}
+markers_gg(top7mark_cluster3)
+```
+```{r}
+markers_gg(LZ)
+```
+
+## cluster 4: NK
+
+ccl5:cd8t cell, nk
+
+AOAH: NK
+GNLY:NK
+
+
+```{r}
+markers_gg(top7mark_cluster4)
+```
+
+```{r}
+markers_gg("KIR2DL4")
+```
+
+## cluster 5: PC
+
+
+```{r}
+markers_gg(top7mark_cluster5)
+```
+
+```{r}
+markers_gg( "MYO1E")
+```
+
+```{r}
+markers_gg(PC)
+```
+
+
+## cluster 6: monocites
+
+```{r}
+markers_gg(top7mark_cluster6)
+```
+
+```{r}
+monocytes_markers<-c("LYZ","S100A8")
+```
+
+```{r}
+markers_gg(monocytes_markers)
+```
+
+## cluster 7
+
+```{r}
+markers_gg(top7mark_cluster7)
+```
+
+# Number of cell in each cluster
+
+
+```{r}
+DimPlot(tonsil_wnn_without_cluster7, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+
+```
+
+
+
+```{r}
+cell.num <- table(Idents(tonsil_wnn_without_cluster7))
+cell.num
+```
+
+# Rename clusters
+
+
+```{r}
+cell.num <- table(Idents(tonsil_wnn_without_cluster7))
+cell.num
+```
+
+```{r}
+new.cluster.ids <- c("Naive/MBC", "Naive CD4 T-celL","GC/DZ", "GC/LZ", "NK T-cell", "PC", "Monocytes","NI")
+names(new.cluster.ids) <- levels(tonsil_wnn_without_cluster7)
+tonsil_wnn_without_cluster7 <- RenameIdents(tonsil_wnn_without_cluster7, new.cluster.ids)
+DimPlot(tonsil_wnn_without_cluster7, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+
+
+# Bibliography  markers
+
+**MARKERS**
+
+Immature B cells express CD19, CD 20, CD34, CD38, and CD45R,
+T-cell receptor/CD3 complex (TCR/CD3 complex) 
+
+
+* **T-cells** (identified by high expression of CD3D and CD3E).
+* **monocytes** (identified by high expression of LYZ and S100A8).
+* **naive B-cells** (identified by high expression of CD79A, CD79B and BLNK).
+* **plasma cells** (identified by B-cell and proliferation markers, such as TOP2A or MKI67).
+* poor-quality cells (identified by high mitochondrial expression). If a cell has pores in the membrane due to cell lysis, the cytosolic mRNA will leak out of the cell; but if the diameter of mitochondria is higher than the pores, they will get trapped inside the cell.
+
+DZ: SUGCT, CXCR4, AICDA
+
+LZ: CD83, BCL2A1
+
+GC total: MEF2B, BCL6, IRF4
+
+PC: PRDM1, SLAMF7, MZB1, FKBP11
+
+
+```{r}
+canonical_bcell_markers <-c("CD34", "CD38", "CD19")
+
+monocytes_markers<-c("LYZ","S100A8")
+
+naive_markers<-c("CD79A", "CD79B", "BLNK")
+
+bib_Bcell_markers<-c("CD19","CR2","MS4A1","RALGPS2","CD79A")
+bib_Tcell_markers<-c("CD3E","CD4","CD8A","FOXP3","IL17A")
+
+markers_bcell<-c("BANK1","ARHGAP24","ADAM28","MARCH1","RAPGEF5","AFF2","RGS13","LPP","IGHG1","IGLC1","SLC8A1","LYZ","PLXDC2","FAM160A1","IGHA1","IGLC2", "SETBP1","ENTPD1","COL19A1","CCSER1")
+
+markers_tcell<-c("INPP4B","FYB1","LEF1","IL7R","IL6ST","CCL5","GNLY","NKG7","DTHD1","RUNX2", "FOXP3","CD8A","IL17A","CD2")
+
+```
+
+
+
+## B cells
+
+```{r}
+markers_gg(naive_markers)
+```
+
+
+```{r}
+markers_gg(bib_Bcell_markers)
+ 
+```
+
+
+## T-cells
+
+CD8+ T cell markers:"CD3D", "CD8A"
+NK cell markers:"GNLY", "NKG7"
+
+```{r}
+markers_gg(bib_Tcell_markers)
+  
+```
+
+
+## Pauli markers
+
+
+```{r}
+naive_mem_bcell<-c("BANK1", "FCER2")
+cd4_tcell<-c("CD3D", "IL7R")
+cytotoxic<-c("GNLY", "NKG7", "GZMK", "CD8A")
+myeloid<-c("LYZ", "S100A8")	
+
+dz_gc_bcell<-c("MKI67", "TOP2A")
+lz_gc_bcell<-c("MARCKSL1", "RGS13", "LMO2", "CCDC88A")	
+memory_bcell<-c(	"FCRL4", "FCRL5", "PLAC8", "SOX5")
+pc<-c("IGHG1", "IGHA1", "JCHAIN", "XBP1")
+poor_q_doublets <-c("FDCSP", "CLU", "CXCL13", "CR2")
+doublet_proliferative_tcell<-c("MT2A", "CD3D", "TRAC", "PCNA")
+Unk<-c("PTPRCAP", "CD37", "CD74")	
+PDC<-c("PTCRA", "LILRA4", "IRF7")
+```
+
+```{r}
+markers_gg(naive_mem_bcell)
+```
+
+```{r}
+markers_gg(cd4_tcell)
+```
+
+```{r}
+
+markers_gg(dz_gc_bcell)
+```
+
+```{r}
+markers_gg(lz_gc_bcell)
+```
+```{r}
+markers_gg(cytotoxic)
+```
+
+Cytotoxic T cells are effector cells that destroy virus-infected cells, tumor cells, and tissue grafts that exist in the cytosol, or contiguous nuclear compartment. The cells are also known as CD8+ T 
+
+```{r}
+markers_gg(pc)
+```
+
+```{r}
+markers_gg(myeloid)
+```
+
+```{r}
+markers_gg(poor_q_doublets)
+```
+
+```{r}
+markers_gg(doublet_proliferative_tcell)
+```
+
+ Proliferating cell nuclear antigen (PCNA)
+ 
+```{r}
+
+markers_gg(Unk)
+```
+```{r}
+
+markers_gg(PDC)
+
+```
+
+```{r}
+
+markers_gg("FOXO1")
+
+```
+
+"NFKB1": CLUSTER 2
+
+
+```{r}
+markers_gg( "MYO1E")
+```
+
+
+## Doublet score
+
+
+```{r}
+FeaturePlot(
+    tonsil_wnn_without_cluster7,
+    features = "doublet_scores",
+    reduction = "wnn.umap",
+    pt.size = 0.1
+  )
+```
+
+
+# CellCycleScoring
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+tonsil_wnn_without_cluster7 <- CellCycleScoring(tonsil_wnn_without_cluster7, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+head(tonsil_wnn_without_cluster7[[]])
+
+```
+
+```{r}
+print(x = tonsil_wnn_without_cluster7[["pca"]], 
+      dims = 1:10, 
+      nfeatures = 5)
+```
+PCNA: Proliferating cell nuclear antigen
+
+```{r}
+# Visualize the distribution of cell cycle markers across
+RidgePlot(tonsil_wnn_without_cluster7, features = c("PCNA", "TOP2A", "MCM6", "MKI67"), ncol = 2)
+```
+```{r}
+tonsil_wnn_without_cluster7 <- RunPCA(tonsil_wnn_without_cluster7, features = c(s.genes, g2m.genes))
+tonsil_wnn_without_cluster7 <- RunUMAP(object = tonsil_wnn_without_cluster7,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_" )
+```
+
+```{r}
+DimPlot(tonsil_wnn_without_cluster7,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T, split.by = "age_group")
+```
+
+```{r}
+DimPlot(tonsil_wnn_without_cluster7,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T)
+```
+
+
+
+
+

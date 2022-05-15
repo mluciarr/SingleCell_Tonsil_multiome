@@ -1,0 +1,413 @@
+---
+title: "Cluster5_ATAC_analysis"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load package
+
+
+```{r message=FALSE, warning=FALSE}
+
+library(GenomicRanges)
+library(patchwork)
+library(kableExtra)
+library(tidyverse)
+library(ggpubr)
+library(Seurat)
+library(Signac)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(ComplexUpset)
+library(ggplot2)
+library(plyr)
+
+set.seed(123)
+options(scipen=999)
+
+```
+
+
+# Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.1.tonsil_multiome_bcells_Linkpeaks_df_normalized.rds")
+path_to_macs2<-"~/Documents/multiome_tonsil_Lucia/results/tables/13.df_MACS_annotation_level_1.csv"
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_bcell <- readRDS(path_to_obj)
+peaks_df<-read_csv(path_to_macs2)
+```
+
+
+# Rename
+
+```{r}
+new.cluster.ids <- c("MBC","NBC", "GC/DZ", "GC/LZ","PC","MBC_NBC")
+
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell)
+tonsil_wnn_bcell <- RenameIdents(tonsil_wnn_bcell, new.cluster.ids)
+tonsil_wnn_bcell[["annotation_level_1"]] <- Idents(object = tonsil_wnn_bcell)
+DimPlot(tonsil_wnn_bcell, reduction = "wnn.umap", pt.size = 0.5,cols = c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c")) + ggtitle("Joint UMAP")
+```
+
+```{r}
+DimPlot(tonsil_wnn_bcell, reduction = "umap.atac", pt.size = 0.5,cols = c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c")) + ggtitle("ATAC-seq UMAP")
+
+```
+
+```{r}
+DimPlot(tonsil_wnn_bcell, reduction = "umap.rna", pt.size = 0.5,cols = c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c") ) + ggtitle("RNA-seq UMAP")
+
+```
+
+
+## Select cluster 5 cells - barcode cells
+
+```{r echo=TRUE}
+tonsil_wnn_bcell$is_cluster5 <- 
+  tonsil_wnn_bcell$wsnn_res.0.075 == "5" 
+
+tonsil_wnn_cluster5 <- subset(tonsil_wnn_bcell, subset = is_cluster5 == TRUE)
+
+barcode_cluster5<-tonsil_wnn_cluster5@meta.data$lib_name_barcode
+```
+
+
+### WNN
+
+```{r}
+DimPlot(object = tonsil_wnn_bcell, cells.highlight = barcode_cluster5, reduction = "wnn.umap", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()+ ggtitle("Joint UMAP")
+```
+### ATAC
+
+```{r}
+DimPlot(object = tonsil_wnn_bcell, cells.highlight = barcode_cluster5, reduction = "umap.atac", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()+ ggtitle("ATAC UMAP")
+```
+### RNA
+
+```{r}
+DimPlot(object = tonsil_wnn_bcell, cells.highlight = barcode_cluster5, reduction = "umap.rna", cols.highlight = "red", cols = "gray", order = TRUE)+NoLegend()+ ggtitle("RNA UMAP")
+```
+
+
+# FindMarkers pairwise
+
+```{r}
+DimPlot(
+    tonsil_wnn_bcell,
+    group.by = "wsnn_res.0.075",
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+```
+
+
+```{r}
+Idents(tonsil_wnn_bcell)<-"wsnn_res.0.075"
+cluster5_0.markers <- FindMarkers(tonsil_wnn_bcell, ident.1 = 5, ident.2= 0, logfc.threshold = 0.25, only.pos = TRUE)
+
+write.csv(cluster5_0.markers, file = "~/Documents/multiome_tonsil_Lucia/results/tables/16_cluster5vs0.markers.csv") 
+
+cluster5_1.markers <- FindMarkers(tonsil_wnn_bcell, ident.1 = 5, ident.2= 1, logfc.threshold = 0.25, only.pos = TRUE)
+write.csv(cluster5_1.markers, file = "~/Documents/multiome_tonsil_Lucia/results/tables/16_cluster5vs1.markers.csv") 
+```
+
+```{r}
+df_5vs0<-as.data.frame(cluster5_0.markers)
+top10_5vs0<-df_5vs0[1:10,]
+
+df_5vs1<-as.data.frame(cluster5_1.markers)
+top10_5vs1<-df_5vs1[1:10,]
+```
+
+```{r}
+DT::datatable(df_5vs0)
+```
+
+tox: t cell
+trerf1: Transcriptional regulating factor 1- T cell
+TSHZ2:Immune cell enhanced (naive CD4 T-cell, T-reg)
+
+SSPN:sarcopan: Group enriched (memory B-cell, naive B-cell)
+
+PRKCH: Cell type enhanced (Microglial cells, NK-cells, T-cells, dendritic cells)
+
+
+```{r}
+DT::datatable(df_5vs1)
+
+```
+
+
+FOXP1	: Low immune cell specificity
+igha1: Group enriched (memory B-cell, naive B-cell)
+IGLC1: Group enriched (naive B-cell, memory B-cell)
+```{r}
+FeaturePlot(tonsil_wnn_bcell,reduction = "umap.atac",features = "nCount_ATAC",min.cutoff = "q1",max.cutoff = "q99")
+FeaturePlot(tonsil_wnn_bcell,reduction = "umap.atac",features = "nFeature_ATAC",min.cutoff = "q1",max.cutoff = "q99")
+
+```
+
+# ComplexUpset
+
+
+
+```{r}
+Idents(tonsil_wnn_bcell)<-"wsnn_res.0.075"
+peaks_df_freq = data.frame(table(peaks_df$peak_called_in))
+nrow(peaks_df_freq)
+```
+
+```{r}
+data_filter = peaks_df_freq[peaks_df_freq$Freq > 50,]
+nrow(data_filter)
+```
+
+```{r}
+dat <- peaks_df_freq
+groups <- as.character(levels(tonsil_wnn_bcell$wsnn_res.0.075))
+subsets <- peaks_df$peak_called_in
+
+mat <- map_dfc(subsets, str_detect, groups) %>%
+    data.frame() %>%
+    t() %>% # transpose the result, ugh
+    as_tibble()
+colnames(mat)  <- groups
+mat$count <- dat$count
+```
+
+```{r}
+options(repr.plot.width=20, repr.plot.height=10)
+ComplexUpset::upset(data = mat, 
+                    intersect = groups,
+      name="peaks Groupings by Cell Type", 
+      min_size = 500,
+      width_ratio = 0.125,
+      base_annotations=list(
+        'Intersection size'=intersection_size(
+            text=list(
+                size=1.5
+                
+            )
+        )),
+       queries=list(
+        upset_query(set="0", fill="#a6cee3"),
+        upset_query(set="1", fill="#1f78b4"),
+        upset_query(set="2", fill="#b2df8a"),
+        upset_query(set="3", fill="#33a02c"),
+        upset_query(set="4", fill="#fb9a99"),
+        upset_query(set="5", fill="#e31a1c"),
+        upset_query(
+            intersect="0", color="#a6cee3",
+            fill="#a6cee3",
+            only_components=c('intersections_matrix', 'Intersection size')
+        ),
+        upset_query(
+            intersect="1",
+            color="#1f78b4",
+            fill="#1f78b4",
+            only_components=c('intersections_matrix', 'Intersection size')
+        ),
+        upset_query(
+            intersect="2",
+            color="#b2df8a",
+            fill="#b2df8a",
+            only_components=c('intersections_matrix', 'Intersection size')
+        ),
+        upset_query(
+            intersect="3",
+            color="#33a02c",
+            fill="#33a02c",
+            only_components=c('intersections_matrix', 'Intersection size')
+        ),
+        upset_query(
+            intersect="4",
+            color="#fb9a99",
+            fill="#fb9a99",
+            only_components=c('intersections_matrix', 'Intersection size')
+        ),
+        upset_query(
+            intersect="5",
+            color="#e31a1c",
+            fill="#e31a1c",
+            only_components=c('intersections_matrix', 'Intersection size')
+        )
+    ), set_sizes=upset_set_size(
+            geom=geom_bar(width=0.6),position = "right"
+        )) 
+
+
+```
+
+
+
+
+# Purity score
+
+From the intersection data, we decided to create a purity score to asses how many a peak are unique or share across cell type.
+
+```{r}
+purity_score <- function(peaks_freq = peaks_df_freq, cluster_type)
+  
+{ #save in a data frame all the peaks where this cluster was called, and show the rest of the clusters that share the same peak
+  cluster = peaks_df_freq[grep(cluster_type, peaks_df_freq$Var1),]
+
+#numero de clusters que comparten ese pico.
+  cluster_sharing= nchar(gsub('[^,]', '', cluster[grep(cluster_type, cluster$Var1),]$Var1))+1
+  
+  #save in another column the multiplication of the frequency that that peak was called by the number of cluster that  share that peak
+  cluster$peaks_cluster = cluster$Freq * cluster_sharing 
+  
+  # Purity score: divide the number of peaks that cluster has by its own (not sharing) by the rest of peaks except for its peaks
+  PS = cluster[cluster$Var1 == cluster_type,]$peaks_cluster / sum(cluster[cluster$Var1 != cluster_type,]$peaks_cluster)
+  return(PS)
+}
+
+```
+
+```{r}
+cluster_types = levels(tonsil_wnn_bcell$wsnn_res.0.075)
+ps_values = c()
+
+for (cluster in cluster_types) {
+ ps_value = purity_score(peaks_freq = peaks_df_freq, cluster)
+ ps_values = c(ps_values,ps_value)
+}
+
+df = data.frame(cluster_types,ps_values)
+df$ps_values = round(df$ps_values,4)
+colnames(df) <- c("seurat_clusters","purity_score")
+ 
+ps1<-ggplot(data=df, aes(x=as.factor(cluster_types), y=ps_values/sum(ps_values))) +
+  geom_bar(stat="identity") + theme_minimal()
+ps1
+```
+
+```{r}
+cluster_types = levels(tonsil_wnn_bcell$wsnn_res.0.075)
+ps_values = c()
+
+for (cluster in cluster_types) {
+ ps_value = purity_score(peaks_freq = peaks_df_freq, cluster)
+ ps_values = c(ps_values,ps_value)
+}
+
+df = data.frame(cluster_types,ps_values)
+df$ps_values = round(df$ps_values,4)
+colnames(df) <- c("seurat_clusters","purity_score")
+ 
+ps2<-ggplot(data=df, aes(x=as.factor(cluster_types), y=ps_values/sum(ps_values))) +
+  geom_bar(stat="identity") + theme_minimal()
+ps2
+```
+
+
+```{r}
+tonsil_wnn_bcell@meta.data$purity_score <- revalue(
+  tonsil_wnn_bcell@meta.data$annotation_level_1,
+  c(
+    "MBC" = df$purity_score[df$seurat_clusters==0],
+    "NBC" = df$purity_score[df$seurat_clusters==1],
+    "GC/DZ" = df$purity_score[df$seurat_clusters==2],
+    "GC/LZ" = df$purity_score[df$seurat_clusters==3],
+    "PC" = df$purity_score[df$seurat_clusters==4],
+    "MBC_NBC" = df$purity_score[df$seurat_clusters==5]
+  )
+)
+
+tonsil_wnn_bcell@meta.data$purity_score <-(as.numeric(as.character(tonsil_wnn_bcell@meta.data$purity_score)))
+options(repr.plot.width=10, repr.plot.height=10)
+FP1<-FeaturePlot(tonsil_wnn_bcell, "purity_score",cols = c("lightgrey", "blue"),reduction = "wnn.umap")
+FP2<-FeaturePlot(tonsil_wnn_bcell, "purity_score",cols = c("lightgrey", "blue"),reduction = "wnn.umap")
+
+```
+
+```{r}
+tonsil_wnn_bcell@meta.data$purity_score <- revalue(
+  tonsil_wnn_bcell@meta.data$annotation_level_1,
+  c(
+    "MBC" = df$purity_score[df$seurat_clusters==0],
+    "NBC" = df$purity_score[df$seurat_clusters==1],
+    "GC/DZ" = df$purity_score[df$seurat_clusters==2],
+    "GC/LZ" = df$purity_score[df$seurat_clusters==3],
+    "PC" = df$purity_score[df$seurat_clusters==4],
+    "MBC_NBC" = df$purity_score[df$seurat_clusters==5]
+  )
+)
+
+tonsil_wnn_bcell@meta.data$purity_score <-(as.numeric(as.character(tonsil_wnn_bcell@meta.data$purity_score)))
+options(repr.plot.width=10, repr.plot.height=10)
+FP2<-FeaturePlot(tonsil_wnn_bcell, "purity_score",cols = c("lightgrey", "blue"),reduction = "wnn.umap")
+FP2
+```
+
+```{r}
+mine.heatmap <- ggplot(data = df, mapping = aes(x = seurat_clusters,
+y = 1,
+fill = purity_score)) +
+geom_tile() +
+xlab(label = "Sample")+ scale_fill_gradient(name = "Purity score(log10)",
+low = "lightgrey",
+high = "blue")
+mine.heatmap
+```
+
+
+# Doublet plot
+
+
+```{r}
+FeaturePlot(tonsil_wnn_bcell,
+            reduction = "umap.atac",
+            features = "doublet_scores",
+            min.cutoff = "q1",
+            max.cutoff = "q99")
+```
+
+
+
+
+# CellCycleScoring
+
+
+```{r}
+DimPlot(tonsil_wnn_bcell,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T, group.by = "Phase")
+```
+
+```{r}
+DimPlot(tonsil_wnn_bcell,
+    reduction = "umap.atac",
+    pt.size = 0.1, label = T, group.by = "Phase")
+```
+
+```{r}
+sessionInfo()
+```

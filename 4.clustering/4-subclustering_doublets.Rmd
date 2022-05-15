@@ -1,0 +1,133 @@
+---
+title: "Subclustering Delete Doublets"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load packages
+
+```{r}
+library(Seurat)
+library(Signac)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(magick)
+library(knitr) 
+library(kableExtra)
+library(devtools)
+```
+(ggpubr)[http://rpkgs.datanovia.com/ggpubr/reference/index.html]
+
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("~/Documents/multiome_tonsil_Lucia/results/R_objects/9.tonsil_multiome_integrated_using_wnn_clustering.rds")
+path_to_save <- here::here("~/Documents/multiome_tonsil_Lucia/results/R_objects/10.tonsil_multiome_integrated_without_doublets.rds")
+# Thresholds
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn1 <- readRDS(path_to_obj)
+```
+
+# Subclustering cluster 0 and 1
+
+## cluster 1
+
+```{r}
+tonsil_wnn<-FindSubCluster(
+  tonsil_wnn1,
+  1,
+  graph.name="wsnn",
+  subcluster.name = "sub.cluster_0.25",
+  resolution = 0.25,
+  algorithm = 3
+)
+
+```
+## cluster 0
+
+```{r eval=FALSE, include=FALSE}
+tonsil_wnn<-FindSubCluster(
+  tonsil_wnn,
+  0,
+  graph.name="wsnn",
+  subcluster.name = ,"sub.cluster0_0.5",
+  resolution = 0.5,
+  algorithm = 3
+)
+
+```
+
+
+## Dimentional plot
+
+```{r}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^sub.cluster")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p
+})
+clusters_gg 
+```
+
+```{r eval=FALSE, include=FALSE}
+ob.list <- SplitObject(tonsil_wnn, split.by = "sub.cluster_0.25")
+plot.list <- lapply(X = ob.list, FUN = function(x) {
+    DimPlot(x, reduction = "wnn.umap", label = T, label.size = 4)
+})
+plot.list
+```
+
+# Filtering doublets out 
+
+```{r}
+tonsil_wnn$is_doublet <- 
+  tonsil_wnn$sub.cluster_0.25 == "1_2" 
+tonsil_wnn <- subset(tonsil_wnn, subset = is_doublet == FALSE)
+```
+
+```{r}
+DimPlot(tonsil_wnn, reduction = "wnn.umap", group.by = "wsnn_res.0.02", label = TRUE, pt.size = 0.1)
+```
+
+
+
+# Save
+
+```{r}
+saveRDS(tonsil_wnn, path_to_save)
+
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

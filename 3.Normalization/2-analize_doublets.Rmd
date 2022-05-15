@@ -1,0 +1,177 @@
+---
+title: "Analizing Doublets with UMAP"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+In this notebook we will plot the scrublet doublet scores on the UMAPs computed in the previous notebook.
+
+
+# Pre-processing
+
+## Load packages
+
+```{r}
+library(Seurat)
+library(Signac)
+library(tidyverse)
+```
+
+## Load data
+
+```{r}
+# Paths
+path_to_data <-("/Users/mlromeror/Documents/multiome_tonsil_Lucia/results/R_objects/8.tonsil_multiome_integrated_using_wnn.rds")
+tonsil_integrated <- readRDS(path_to_data)
+```
+
+
+## Parameters
+
+```{r}
+# Thresholds
+max_doublet_score_rna <- 0.3
+```
+
+
+# Doublet score
+
+## Scrublet doublet score 
+
+```{r fig.wide=TRUE}
+
+hist <- tonsil_integrated@meta.data %>%
+  ggplot(aes(doublet_scores)) +
+    geom_histogram(bins = 30) +
+    geom_vline(
+      xintercept = 0.3,
+      linetype = "dashed",
+      color = "red"
+    ) +
+    xlab("Doublet Score (RNA)") +
+    theme_bw() +
+    theme(
+      axis.title = element_text(size = 13),
+      axis.text = element_text(size = 11)
+    )
+hist
+```
+
+
+## Projection
+
+### RNA-driven UMAP
+
+```{r}
+
+# Plot
+feat_plot1 <- FeaturePlot(
+  tonsil_integrated,
+  features = "doublet_scores",
+  reduction = "umap.atac",
+  pt.size = 0.1
+)+ ggtitle('scATAC UMAP doublet scores') 
+
+dim_plot1   <- DimPlot(
+  tonsil_integrated,
+  group.by = "predicted_doublets",
+  reduction = "umap.atac",
+  pt.size = 0.1
+) + ggtitle('scATAC UMAP predicted doublet') 
+
+```
+
+
+```{r fig.wide=TRUE}
+feat_plot1
+```
+
+```{r fig.wide=TRUE}
+dim_plot1
+```
+
+
+### RNA-driven UMAP
+
+```{r}
+feat_plot3 <- FeaturePlot(
+  tonsil_integrated,
+  features = "doublet_scores",
+  reduction = "umap.rna",
+  pt.size = 0.1
+) + ggtitle('scRNA UMAP doublet scores') 
+
+dim_plot2 <- DimPlot(
+  tonsil_integrated,
+  group.by = "predicted_doublets",
+  reduction = "umap.rna",
+  pt.size = 0.1
+)+ ggtitle('scRNA UMAP predicted doublets ') 
+```
+
+```{r fig.wide=TRUE}
+feat_plot3
+```
+
+```{r fig.wide=TRUE}
+dim_plot2
+```
+
+## Joint Multiome
+
+```{r}
+feat_plot4 <- FeaturePlot(
+  tonsil_integrated,
+  features = "doublet_scores",
+  reduction = "wnn.umap",
+  pt.size = 0.1
+)+ ggtitle('Joint UMAP doublet scores') 
+
+dim_plot4 <- DimPlot(
+  tonsil_integrated,
+  group.by = "predicted_doublets",
+  reduction = "wnn.umap",
+  pt.size = 0.1
+)+ ggtitle('Joint UMAP predicted doublets') 
+```
+
+```{r}
+feat_plot4
+```
+
+```{r}
+dim_plot4
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+t=1
+for (z in rownames(tonsil_integrated[["RNA"]]@counts)) 
+{
+  if (z=="CD3D"){ print (t)
+  } 
+  t=t+1 }
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

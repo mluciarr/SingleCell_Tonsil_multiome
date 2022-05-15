@@ -1,0 +1,453 @@
+---
+title: "Subset of MNB NBC and  MNB_NBC cluster"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load package
+
+
+```{r message=FALSE, warning=FALSE}
+library("RColorBrewer")
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+library(harmony)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(kableExtra)
+library(tidyverse)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+set.seed(123)
+```
+
+# Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.1.tonsil_multiome_bcells_Linkpeaks_df_normalized.rds")
+path_to_save<-("~/Documents/multiome_tonsil_Lucia/results/R_objects/17.tonsil_multiome_MBC_NBC.rds")
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_bcell <- readRDS(path_to_obj)
+```
+
+## Filtering  doublet cluster  7
+
+```{r}
+Idents(tonsil_wnn_bcell)<-"wsnn_res.0.075"
+new.cluster.ids <- c("MBC","NBC", "GC/DZ", "GC/LZ","PC","MBC_NBC")
+
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell)
+tonsil_wnn_bcell <- RenameIdents(tonsil_wnn_bcell, new.cluster.ids)
+tonsil_wnn_bcell[["annotation_level_1"]] <- Idents(object = tonsil_wnn_bcell)
+DimPlot(tonsil_wnn_bcell, reduction = "wnn.umap", pt.size = 0.5,cols = c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c")) + ggtitle("Joint UMAP")
+```
+
+
+# Subset of MBC, NBC and MBC_NBC
+
+```{r echo=TRUE}
+sub<-subset(x = tonsil_wnn_bcell, idents = c("MBC", "NBC" ,"MBC_NBC"))
+```
+
+```{r echo=TRUE}
+DimPlot(sub, reduction = "wnn.umap",  pt.size = 0.1)
+```
+
+# Normalzation
+
+## scATAC
+
+### Normalization and linear dimensional reduction
+
+ We exclude the first dimension as this is typically correlated with sequencing depth
+Cells cluster completely separately in ATAC without harmony; so run harmony after SVD
+
+RunSVD LSI
+```{r}
+DefaultAssay(sub) <- "ATAC"
+sub <- RunTFIDF(sub)
+sub <- FindTopFeatures(sub, min.cutoff = "q0")
+sub <- RunSVD(sub)
+```
+
+
+
+### Plot the Depth correlation plot
+
+Compute the correlation between total counts and each reduced dimension component.
+
+LSI component is typically highly correlated with sequencing depth. 
+The first LSI component often captures sequencing depth (technical variation) rather 
+than biological variation. If this is the case, the component should be removed from 
+downstream analysis. We can assess the correlation between each LSI component and 
+sequencing depth using the DepthCor() function:
+
+For scRNA-seq data we don't typically observe such a strong relationship between the first PC and sequencing depth, and so usually retain the first PC in downstream analyses.
+
+
+```{r fig.wide=TRUE}
+
+DepthCor(sub)
+
+```
+
+Here we see there is a very strong correlation between the first LSI component and the total 
+number of counts for the cell, so we will perform downstream steps without this component.
+
+
+### UMAP representation
+
+* dimensional reduction key, specifies the string before the number for the dimension names. UMAP by default
+* reduction.name: Name to store dimensional reduction under in the Seurat object
+
+
+```{r fig.wide=TRUE}
+sub <- RunUMAP(
+  sub,
+  dims = 2:40,
+  reduction = "lsi",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+atac.umap<-DimPlot(
+  sub,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + ggtitle('scATAC UMAP') + NoLegend()
+
+atac.umap
+
+#split_by: library ,edad, genero
+```
+
+
+
+## scRNA
+
+### Normalization and linear dimensional reduction- 
+
+### NormalizeData
+
+```{r message=FALSE, warning=FALSE}
+DefaultAssay(sub) <- "RNA"
+sub <- NormalizeData(
+  sub,
+  normalization.method = "LogNormalize",
+  scale.factor = 1e4
+)
+
+sub <- sub %>%
+  FindVariableFeatures(nfeatures = 3000) %>%
+  ScaleData() %>% 
+  RunPCA() 
+```
+
+
+
+```{r}
+PCAPlot(sub,
+  group.by = "library_name")
+
+```
+
+
+```{r}
+ElbowPlot(object = sub)
+```
+
+
+### UMAP representation
+
+```{r}
+sub <- RunUMAP(
+  sub,
+  dims = 1:30,
+  reduction = "pca",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+rna.umap<-DimPlot(
+  sub,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1) + NoLegend() + ggtitle('scRNA UMAP')
+
+rna.umap
+```
+
+
+```{r}
+atac.umap + rna.umap
+```
+
+
+hacer primero harmony, quitar batch effect. 
+atac y rna. harmony
+
+# Run Harmony 
+
+Pass the Seurat object to the RunHarmony function and specify which variable to integrate 
+out. A Seurat object is returned with corrected Harmony coordinates.
+
+## scATAC
+
+```{r}
+DefaultAssay(sub) <- "ATAC"
+sub <- RunHarmony(
+  object = sub,
+  reduction = "lsi",
+  dims = 2:40,
+  group.by.vars = "library_name",
+  assay.use = "ATAC",
+  project.dim = FALSE,
+  reduction.save = "harmony_ATAC"
+)
+```
+
+
+### UMAP representation
+
+```{r}
+sub <- RunUMAP(
+  sub,
+  dims = 2:40,
+  reduction = "harmony_ATAC",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+
+Harm_peak<-DimPlot(
+  sub,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('Peak Harmony')
+```
+
+# scRNA
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+DefaultAssay(sub) <- "RNA"
+sub <- RunHarmony(
+  object = sub,
+  reduction = "pca",
+  dims = 1:30,
+  group.by.vars = "library_name",
+  assay.use = "RNA",
+  project.dim = FALSE,
+  reduction.save = "harmony_rna"
+)
+```
+
+```{r}
+sub <- RunUMAP(
+  sub,
+  dims = 2:40,
+  reduction = "harmony_rna",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+Harm_rna<-DimPlot(
+  sub,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('RNA Harmony')
+```
+
+## scATAC and RNAseq Harmony
+
+```{r}
+Harm_peak+Harm_rna 
+```
+
+
+## Joint UMAP visualization
+
+**FindNeighbors**
+
+Constructs a Shared Nearest Neighbor (SNN) Graph for a given dataset. We first 
+determine the k-nearest neighbors of each cell. We use this knn graph to construct 
+the SNN graph by calculating the neighborhood overlap (Jaccard index) between 
+every cell and its k.param nearest neighbors.
+
+```{r}
+# build a joint neighbor graph using both assays
+sub <- FindMultiModalNeighbors(
+  object = sub,
+  reduction.list = list("harmony_ATAC", "harmony_rna"),
+  dims.list = list(2:40, 1:30), modality.weight.name = "Joint_snn_umap"
+  )
+
+# build a joint UMAP visualization
+
+sub <- RunUMAP(
+  object = sub,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_")
+```
+
+```{r}
+joint.umap<- DimPlot(sub, label = FALSE, group.by = "library_name", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP')+ ggtitle('Joint UMAP by library name') + NoLegend()
+
+joint.umap
+```
+
+
+```{r}
+joint.umap_age<- DimPlot(sub, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_hospital<- DimPlot(sub, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_age
+joint.umap_hospital
+```
+
+
+## FindClusters
+
+```{r}
+#find cluster algorithm 3 = SLM algorithm
+
+sub <- FindClusters(sub, resolution = c(0.03,0.025),algorithm = 3, graph.name = "wsnn",verbose = FALSE)
+print(colnames(sub@meta.data))
+```
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(sub@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    sub,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+# Peak calling
+
+```{r}
+# call peaks using MACS2
+DefaultAssay(sub) <- "ATAC"
+
+peaks <- CallPeaks(sub, macs2.path = "~/Documents/python3/bin/macs2",group.by="wsnn_res.0.03")
+
+df_mnbc <- annoGR2DF(peaks)
+
+write_csv(df, "~/Documents/multiome_tonsil_Lucia/results/tables/17.df_MACS_annotation_level_MBC_NBC.csv")
+saveRDS(peaks, "~/Documents/multiome_tonsil_Lucia/results/tables/17.MACS_annotation_level_MBC_NBC.rds")
+
+
+# remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks <- keepStandardChromosomes(peaks, pruning.mode = "coarse")
+peaks <- subsetByOverlaps(x = peaks, ranges = blacklist_hg38_unified, invert = TRUE)
+saveRDS(peaks, "~/Documents/multiome_tonsil_Lucia/results/tables/17.peaks_annotation_level_MBC_NBC_subset.rds")
+
+# quantify counts in each peak:
+## Construct a feature x cell matrix from a genomic fragments file
+
+
+macs2_counts <- FeatureMatrix(
+  fragments = Fragments(sub),
+  features = peaks,
+  cells = colnames(sub)
+)
+
+# create a new assay using the MACS2 peak set and add it to the Seurat object
+
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+seqlevelsStyle(annotation) <- "UCSC"
+
+fragments<-Fragments(sub[["peaks"]])
+
+sub[["ATAC"]] <- CreateChromatinAssay(
+  counts = macs2_counts,
+  fragments = fragments,
+  annotation = annotation
+)
+
+
+#Run term frequency inverse document frequency (TF-IDF) normalization on a matrix.
+DefaultAssay(sub) <- "ATAC"
+sub <- RunTFIDF(sub)
+sub <- FindTopFeatures(sub, min.cutoff = "q0")
+sub <- RunSVD(sub)
+
+```
+
+
+# Doublet
+
+```{r}
+FeaturePlot(sub,reduction = "wnn.umap",features = "doublet_scores", min.cutoff = "q1",
+            max.cutoff = "q99")
+```
+
+# Find All Markers
+
+```{r}
+Idents(sub)<-"wsnn_res.0.03"
+tonsil_markers_mnbc<-FindAllMarkers(object = sub, only.pos = TRUE,assay = "RNA")
+df_markers_mnbc<-data.frame(tonsil_markers_mnbc)
+```
+```{r}
+top_7_mnbc_markers<-tonsil_markers_mnbc %>% group_by(cluster) %>% top_n(n = 7, wt = avg_log2FC)
+top10_mnbc_markers<-tonsil_markers_mnbc %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+```
+
+```{r}
+df_top7<-as.data.frame(top_7_mnbc_markers)
+df_top10<-as.data.frame(top10_mnbc_markers)
+
+df_mark<-as.data.frame(tonsil_markers_mnbc)
+```
+
+## Dynamic table top 7 & 10
+
+```{r}
+DT::datatable(df_top7)
+```
+
+```{r}
+DT::datatable(df_top10)
+```
+
+# Save
+
+```{r}
+saveRDS(sub, path_to_save)
+
+```
+

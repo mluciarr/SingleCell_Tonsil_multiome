@@ -1,0 +1,376 @@
+---
+title: "1-Normalization"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Objective
+
+The objective of this notebook is to perform pre-processing and dimensional reduction on both assays independently, using standard approaches for RNA and ATAC-seq data. Then, we will follow the ["Joint RNA and ATAC analysis: 10x multiomic"](https://satijalab.org/signac/articles/tonsil_filtered_multiomic.html) vignette from Signac to obtain a joint visualization using both modalities.
+
+# Pre-processing
+
+## Load packages
+```{r}
+pkgs <- c(
+    "renv",
+    "reticulate",
+    "png",
+    "ggplot2",
+    "BiocManager",
+    "Seurat"
+)
+
+bioc_pkgs <- c(
+    "SingleCellExperiment",
+    "scater",
+    "multtest"
+)
+
+
+# Otherwise do it the normal way
+install.packages(pkgs)
+
+# Install Bioconductor packages
+BiocManager::install(bioc_pkgs, update = FALSE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library("RColorBrewer")
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+#library(SeuratWrappers)
+library(harmony)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+set.seed(123)
+```
+
+
+## Parameters
+
+```{r}
+path_to_object <- ("/Users/mlromeror/Documents/multiome_tonsil_Lucia/results/R_objects/7.tonsil_filtered_merged_with_metadata.rds")
+path_to_save <- ("/Users/mlromeror/Documents/multiome_tonsil_Lucia/results/R_objects/8.tonsil_multiome_integrated_using_wnn.rds")
+
+```
+
+
+
+## Load Multiome filtered data with metadata 
+
+```{r}
+tonsil_filtered <- readRDS(path_to_object)
+tonsil_filtered
+```
+
+**change libray names*
+```{r}
+colnames(tonsil_filtered@meta.data)[16]<-"library_name"
+```
+
+
+
+
+
+
+## scATAC
+
+### Normalization and linear dimensional reduction
+
+ We exclude the first dimension as this is typically correlated with sequencing depth
+Cells cluster completely separately in ATAC without harmony; so run harmony after SVD
+
+RunSVD LSI
+```{r}
+DefaultAssay(tonsil_filtered) <- "peaks"
+tonsil_filtered <- RunTFIDF(tonsil_filtered)
+tonsil_filtered <- FindTopFeatures(tonsil_filtered, min.cutoff = "q0")
+tonsil_filtered <- RunSVD(tonsil_filtered)
+```
+
+
+
+### Plot the Depth correlation plot
+
+Compute the correlation between total counts and each reduced dimension component.
+
+
+LSI component is typically highly correlated with sequencing depth. 
+The first LSI component often captures sequencing depth (technical variation) rather 
+than biological variation. If this is the case, the component should be removed from 
+downstream analysis. We can assess the correlation between each LSI component and 
+sequencing depth using the DepthCor() function:
+
+For scRNA-seq data we don't typically observe such a strong relationship between the first PC and sequencing depth, and so usually retain the first PC in downstream analyses.
+
+```{r fig.wide=TRUE}
+
+DepthCor(tonsil_filtered)
+
+```
+
+Here we see there is a very strong correlation between the first LSI component and the total 
+number of counts for the cell, so we will perform downstream steps without this component.
+
+
+### UMAP representation
+
+* dimensional reduction key, specifies the string before the number for the dimension names. UMAP by default
+* reduction.name: Name to store dimensional reduction under in the Seurat object
+
+
+```{r fig.wide=TRUE}
+tonsil_filtered <- RunUMAP(
+  tonsil_filtered,
+  dims = 2:40,
+  reduction = "lsi",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+atac.umap<-DimPlot(
+  tonsil_filtered,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + ggtitle('scATAC UMAP') + NoLegend()
+
+atac.umap
+
+#split_by: library ,edad, genero
+```
+
+
+
+
+
+## scRNA
+
+### Normalization and linear dimensional reduction- 
+
+### NormalizeData (Log Normalization)
+
+```{r message=FALSE, warning=FALSE}
+DefaultAssay(tonsil_filtered) <- "RNA"
+tonsil_filtered <- NormalizeData(
+  tonsil_filtered,
+  normalization.method = "LogNormalize",
+  scale.factor = 1e4
+)
+
+tonsil_filtered <- tonsil_filtered %>%
+  FindVariableFeatures(nfeatures = 3000) %>%
+  ScaleData() %>% 
+  RunPCA() 
+```
+
+
+
+```{r}
+PCAPlot(tonsil_filtered,
+  group.by = "library_name")
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+PrintPCA(object = tonsil_filtered, pcs.print = 1:5, genes.print = 5, use.full = FALSE)
+PCHeatmap(object = tonsil_filtered)
+```
+
+```{r}
+ElbowPlot(object = tonsil_filtered)
+```
+
+
+
+### UMAP representation
+
+```{r}
+tonsil_filtered <- RunUMAP(
+  tonsil_filtered,
+  dims = 1:30,
+  reduction = "pca",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+rna.umap<-DimPlot(
+  tonsil_filtered,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1) + NoLegend() + ggtitle('scRNA UMAP')
+
+rna.umap
+plot(rna.umap)
+```
+
+
+```{r}
+atac.umap + rna.umap
+```
+
+
+hacer primero harmony, quitar batch effect. 
+atac y rna. harmony
+
+# Harmony Integration (correct data bath effect)
+
+Pass the Seurat object to the RunHarmony function and specify which variable to integrate 
+out. A Seurat object is returned with corrected Harmony coordinates.
+
+## scATAC
+
+```{r}
+DefaultAssay(tonsil_filtered) <- "peaks"
+tonsil_filtered <- RunHarmony(
+  object = tonsil_filtered,
+  reduction = "lsi",
+  dims = 2:40,
+  group.by.vars = "library_name",
+  assay.use = "peaks",
+  project.dim = FALSE,
+  reduction.save = "harmony_peaks"
+)
+```
+
+
+### UMAP representation
+
+```{r}
+tonsil_filtered <- RunUMAP(
+  tonsil_filtered,
+  dims = 2:40,
+  reduction = "harmony_peaks",
+  reduction.name = "umap.atac",
+  reduction.key = "atacUMAP_"
+)
+
+Harm_peak<-DimPlot(
+  tonsil_filtered,
+  reduction = "umap.atac",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('Peak Harmony')
+```
+
+# scRNA
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+DefaultAssay(tonsil_filtered) <- "RNA"
+tonsil_filtered <- RunHarmony(
+  object = tonsil_filtered,
+  reduction = "pca",
+  dims = 1:30,
+  group.by.vars = "library_name",
+  assay.use = "RNA",
+  project.dim = FALSE,
+  reduction.save = "harmony_rna"
+)
+```
+
+```{r}
+tonsil_filtered <- RunUMAP(
+  tonsil_filtered,
+  dims = 2:40,
+  reduction = "harmony_rna",
+  reduction.name = "umap.rna",
+  reduction.key = "rnaUMAP_"
+)
+Harm_rna<-DimPlot(
+  tonsil_filtered,
+  reduction = "umap.rna",
+  group.by = "library_name",
+  pt.size = 0.1
+) + NoLegend() + ggtitle('RNA Harmony')
+```
+
+## scATAC and RNAseq Harmony
+
+```{r}
+Harm_peak+Harm_rna + plot_annotation(title = 'Harmony ATAC and RNA UMAP visualization')
+```
+
+
+## Joint UMAP visualization
+
+**FindNeighbors**
+
+Constructs a Shared Nearest Neighbor (SNN) Graph for a given dataset. We first 
+determine the k-nearest neighbors of each cell. We use this knn graph to construct 
+the SNN graph by calculating the neighborhood overlap (Jaccard index) between 
+every cell and its k.param nearest neighbors.
+
+```{r}
+# build a joint neighbor graph using both assays
+tonsil_filtered <- FindMultiModalNeighbors(
+  object = tonsil_filtered,
+  reduction.list = list("harmony_peaks", "harmony_rna"),
+  dims.list = list(2:40, 1:30), modality.weight.name = "Joint_snn_umap"
+  )
+
+# build a joint UMAP visualization
+
+tonsil_filtered <- RunUMAP(
+  object = tonsil_filtered,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_")
+
+joint.umap<- DimPlot(tonsil_filtered, label = FALSE, group.by = "library_name", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP')+ ggtitle('Joint UMAP by library name') + NoLegend()
+
+joint.umap_age<- DimPlot(tonsil_filtered, label = FALSE, split.by = "age_group", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+joint.umap_hospital<- DimPlot(tonsil_filtered, label = FALSE, split.by = "hospital", pt.size = 0.1,  reduction = "wnn.umap") + plot_annotation(title = 'Joint UMAP ')+ ggtitle('Joint UMAP age ') 
+
+```
+
+```{r}
+(atac.umap + rna.umap )
+```
+
+
+
+```{r}
+joint.umap 
+joint.umap_age
+joint.umap_hospital
+```
+
+
+
+
+
+# Save
+
+We will save the resulting object and use it in the following notebook to exclude doublets:
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(tonsil_filtered, path_to_save)
+```
+
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

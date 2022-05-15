@@ -1,0 +1,1124 @@
+---
+title: "Delete Doublets"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load packages
+
+```{r}
+library(Seurat)
+library(Signac)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(magick)
+library(knitr) 
+library(kableExtra)
+library(devtools)
+library(reshape2)
+library(plyr)
+library(ComplexHeatmap)
+library(binovisualfields)
+library(viridis)
+library(RColorBrewer)
+set.seed(123)
+```
+(ggpubr)[http://rpkgs.datanovia.com/ggpubr/reference/index.html]
+
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("~/Documents/multiome_tonsil_Lucia/results/R_objects/8.tonsil_multiome_integrated_using_wnn.rds")
+path_to_save <- here::here("~/Documents/multiome_tonsil_Lucia/results/R_objects/9.tonsil_multiome_integrated_using_wnn_clustering.rds")
+path_to_annotation<-("~/Documents/multiome_tonsil_Lucia/data/data/annotation.csv")
+
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn <- readRDS(path_to_obj)
+
+annotations <- read.csv(path_to_annotation)
+
+```
+
+
+# Cluster
+
+**FindClusters**
+Identify clusters of cells by a shared nearest neighbor (SNN) modularity optimization 
+based clustering algorithm. First calculate k-nearest neighbors and construct 
+the SNN graph. Then optimize the modularity function to determine clusters.
+
+## FindClusters
+
+```{r}
+#find cluster algorithm 3 = SLM algorithm
+
+tonsil_wnn <- FindClusters(tonsil_wnn, resolution = 0.02,algorithm = 3, graph.name = "wsnn",verbose = FALSE)
+print(colnames(tonsil_wnn@meta.data))
+```
+
+## RNA-seq
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "umap.rna",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+## ATAC clustering
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "umap.atac",
+    pt.size = 0.1, label = T
+  )
+  p 
+})
+clusters_gg
+```
+
+
+
+## Joint RNA + ATAC
+
+### Clustering by library name and age group
+
+#### Rename library name
+
+```{r}
+Idents(tonsil_wnn)<-"library_name"
+
+new.cluster.ids <- c("T3_a", "T3_b","T4_a","T4_b","T5_a","T5_b","T5_c","T1_a","T1_b","T2_a","T2_b")
+names(new.cluster.ids) <- levels(tonsil_wnn)
+tonsil_wnn <- RenameIdents(tonsil_wnn, new.cluster.ids) 
+tonsil_wnn[["new_library_name"]] <- Idents(object = tonsil_wnn)
+DimPlot(tonsil_wnn, reduction = "wnn.umap", pt.size = 0.5,cols = c('#a6cee3','#ffff99','#1f78b4','#b2df8a','#33a02c','#fb9a99','#e31a1c','#fdbf6f','#ff7f00','#6a3d9a','#cab2d6'))
+```
+
+```{r fig.wide=TRUE}
+p <- DimPlot(
+  tonsil_wnn,
+  group.by = "library_name",
+  reduction = "wnn.umap",
+  pt.size = 0.1
+)
+p
+```
+
+```{r}
+p <- DimPlot(
+  tonsil_wnn,
+  group.by = "library_name",
+  reduction = "wnn.umap",
+  pt.size = 0.1
+)
+#rasterize(p, dpi = 300)
+pdf(paste("/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/
+", "UMAP_all_data_legend.pdf", sep=""),width=5,height=5,paper="special")
+p
+dev.off()
+```
+
+
+```{r}
+p <- DimPlot(
+  tonsil_wnn,
+  split.by = "age_group",
+  reduction = "wnn.umap",
+  pt.size = 0.1
+)
+p + NoLegend()
+```
+
+### Visualize clusters
+
+```{r fig.wide=TRUE}
+vars <- str_subset(colnames(tonsil_wnn@meta.data), "^wsnn_res")
+clusters_gg <- purrr::map(vars, function(x) {
+  p <- DimPlot(
+    tonsil_wnn,
+    group.by = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = FALSE,cols = c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c")
+  )
+  p
+})
+clusters_gg 
+```
+0: memory_naive
+1:t cells
+2: GC
+3:PC
+4:
+```{r}
+p <- DimPlot(
+  tonsil_wnn,
+  split.by = "wsnn_res.0.02",
+  reduction = "wnn.umap",
+  pt.size = 0.1
+)
+p + NoLegend()
+
+```
+
+### Save to PDF
+
+```{r}
+library(raster)
+p <- DimPlot(
+  tonsil_wnn,
+  group.by = "seurat_clusters_name",
+  reduction = "wnn.umap",
+  pt.size = 0.1, label = FALSE,cols = c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c")
+)
+#rasterize(p, dpi = 300)
+pdf(paste("/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/
+", "UMAP_all_data_res_0.02_legend.pdf", sep=""),width=5,height=5,paper="special")
+p
+dev.off()
+```
+
+
+## Markers
+
+https://hbctraining.github.io/scRNA-seq/lessons/09_merged_SC_marker_identification.html
+
+NOTE: Since each cell is being treated as a replicate this will result in inflated p-values within each group! A gene may have an incredibly low p-value < 1e-50 but that doesn’t translate as a highly reliable marker gene.
+
+When looking at the output, we suggest looking for markers with large differences in expression between pct.1 and pct.2 and larger fold changes. 
+
+In the output:
+
+**pct.1**: is the percentage of cells in the cluster where the gene is detected, 
+**pct.2** : is the percentage of cells on average in all the other clusters where the gene is detected. 
+
+A gene to be considered as an IDEAL cluster marker is expected to be expressed exclusively in that cluster and silenced in all others and thus pct.1 will be more towards 1 and pct.2 towards 0.
+
+For instance if pct.1 = 0.90 and pct.2 = 0.80, it may not be as exciting of a marker. However, if pct.2 = 0.1 instead, the bigger difference would be more convincing. Also, of interest is if the majority of cells expressing the marker is in my cluster of interest. If pct.1 is low, such as 0.3, it may not be as interesting. Both of these are also possible parameters to include when running the function, as described above.
+
+ The interpretation is similar to the **log-fold change**; 
+ 
+* positive values indicate that the gene is upregulated in our cluster of interest, 
+* negative values indicate downregulation and values close to zero indicate that there is little difference
+ 
+```{r}
+#Select the resolution we want to work with
+Idents(tonsil_wnn)<-"wsnn_res.0.02"
+```
+
+
+```{r}
+
+tonsil_markers_02<-FindAllMarkers(object = tonsil_wnn, only.pos = TRUE)
+
+tonsil_markers_02 <- tonsil_markers_02 %>% 
+                left_join(y = unique(annotations[, c("gene_name", "description")]),
+                          by = c("gene" = "gene_name"))
+
+write.csv(tonsil_markers_02,file=paste0("~/Documents/multiome_tonsil_Lucia/results/tables/", "tonsil_all_markers_02.csv"))
+
+```
+
+```{r}
+library(scater)
+plotExpression(tonsil_wnn, features=gene, 
+    x="label", colour_by="label")
+```
+
+
+### Get top n for each cluster
+
+**Resolution 0.02**
+
+```{r}
+top5_tonsil_markers_02<-tonsil_markers_02 %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+top10_tonsil_markers_02<-tonsil_markers_02 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+```
+
+
+```{r}
+df_top5<-as.data.frame(top5_tonsil_markers_02)
+kbl(df_top5,caption = "Table of the top 5 marker of each cluster resolution 0.005") %>%
+  kable_paper("striped", full_width = F)
+```
+
+```{r}
+dot.10 <- DotPlot(tonsil_wnn, features = unique(top10_tonsil_markers_02$gene),cols = c("lightgrey","blue"), cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8)) +ggtitle("res 0.005 top 10 of each cluster")
+
+dot.5 <- DotPlot(tonsil_wnn, features = unique(top5_tonsil_markers_02$gene),cols = c("lightgrey","blue"), cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8))+ggtitle("res 0.005 top 5 of each cluster")
+
+```
+
+```{r}
+dot.10 +
+  coord_flip() +
+  theme(axis.title = element_blank(), axis.text.y = element_text(size = 5))
+dot.5 +
+  coord_flip() +
+  theme(axis.title = element_blank(), axis.text.y = element_text(size = 7))
+```
+
+```{r}
+par(2, 5, mar = c(4, 6, 3, 1))
+for (i in unique(top10_tonsil_markers_02$cluster)) {
+    barplot(sort(setNames(top10_tonsil_markers_02$avg_log2FC, top10_tonsil_markers_02$gene)[top10_tonsil_markers_02$cluster == i], F),
+        horiz = T, las = 1, main = paste0(i, " vs. rest"), border = "white", yaxs = "i")
+    abline(v = c(0, 0.25), lty = c(1, 2))
+}
+```
+
+
+## ComplexHeatMap
+
+
+```{r}
+markers<-c("BANK1", "FCER2","CD3D", "IL7R","MKI67", "TOP2A","MARCKSL1", "RGS13", "LMO2", "CCDC88A","GNLY", "NKG7", "GZMK", "CD8A",	"FCRL4", "FCRL5", "PLAC8", "SOX5","IGHG1", "IGHA1", "JCHAIN", "XBP1","LYZ", "S100A8","MT2A", "CD3D", "TRAC", "PCNA","CD19","CR2","MS4A1","RALGPS2","CD79A")
+```
+
+
+```{r}
+dot<-DotPlot(tonsil_wnn, features = unique(markers),cols = c("lightgrey","blue"), cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8)) +ggtitle("res 0.005 markers of each cluster")
+dot+
+  coord_flip() +
+  theme(axis.title = element_blank(), axis.text.y = element_text(size = 5))
+```
+
+
+```{r}
+m<-c("SUGCT","BANK1", "CXCR4", "MS4A1","RALGPS2","CD83","AICDA","BCL2A1","MEF2B", "BCL6","XBP1","IRF4","PRDM1","SLAMF7", "MZB1", "FKBP11","NKG7", "CD3D", "IL7R","LYZ", "S100A8")
+
+```
+```{r}
+dot<-DotPlot(tonsil_wnn, features = m,cols = c("lightgrey","blue"), cluster.idents = T) + theme(axis.text.x = element_text( size = 10, vjust = 0.8, hjust = 0.8)) +ggtitle("res 0.005 markers of each cluster")
+dot+
+  coord_flip() +
+  theme(axis.title = element_blank(), axis.text.y = element_text(size = 7))
+```
+
+
+
+```{r}
+df<- dot$data
+head(df)
+```
+```{r}
+### the matrix for the scaled expression 
+exp_mat<-df %>% 
+  dplyr::select(-pct.exp, -avg.exp) %>%  
+  pivot_wider(names_from = id, values_from = avg.exp.scaled) %>% 
+  as.data.frame() 
+    
+row.names(exp_mat) <- exp_mat$features.plot  
+exp_mat <- exp_mat[,-1] %>% as.matrix()
+
+head(exp_mat)
+```
+
+```{r}
+## the matrix for the percentage of cells express a gene
+
+percent_mat<-df %>% 
+  dplyr::select(-avg.exp, -avg.exp.scaled) %>%  
+  pivot_wider(names_from = id, values_from = pct.exp) %>% 
+  as.data.frame() 
+    
+row.names(percent_mat) <- percent_mat$features.plot  
+percent_mat <- percent_mat[,-1] %>% as.matrix()
+
+head(percent_mat)
+```
+
+```{r}
+## the range is from 0 - 100
+range(percent_mat)
+```
+
+```{r}
+## these two matrix have the same dimension
+dim(exp_mat)
+```
+```{r}
+dim(percent_mat)
+```
+
+
+```{r}
+## get an idea of the ranges of the matrix
+quantile(exp_mat, c(0.1, 0.5, 0.9, 0.99))
+```
+```{r}
+colnames(exp_mat)
+```
+
+
+```{r}
+
+col_fun = circlize::colorRamp2(c(-1, 0, 2), viridis(20)[c(1,10, 20)])
+
+
+cell_fun = function(j, i, x, y, w, h, fill){
+          grid.rect(x = x, y = y, width = w, height = h, 
+                    gp = gpar(col = NA, fill = NA))
+          grid.circle(x=x,y=y,r= pindex(percent_mat, i, j)/100 * min(unit.c(w, h)),
+                      gp = gpar(fill = col_fun(exp_mat[i, j]), col = NA))}
+## also do a kmeans clustering for the genes with k = 4
+cell_type<-c("B-cells", "T-cells","B-cells","B-cells", "Myeloid",  "NI")
+cluster_anno<-c("NBC_MBC", "T-cells", "GCBC","PBC","Myeloid","NI")
+column_ha<- HeatmapAnnotation(
+    cell_type = cell_type,
+    cluster_anno = cluster_anno,
+    col = list(cell_type = setNames(brewer.pal(4, "Paired"), unique(cell_type)),cluster_anno=setNames(brewer.pal(6, "Paired"), unique(cluster_anno))
+    ),
+    na_col = "grey"
+)
+
+
+Heatmap(exp_mat,
+        heatmap_legend_param=list(title="expression"),
+        column_title = "clustered dotplot", 
+        col=col_fun,
+        rect_gp = gpar(type = "none"),
+        cell_fun = cell_fun,
+        row_names_gp = gpar(fontsize = 7),
+       #row_km = 6,
+        #border = "black",
+        show_column_dend = FALSE,
+        row_gap = unit(2, "mm"),
+       show_column_names = FALSE,
+       top_annotation = column_ha)
+```
+```{r}
+column_ha
+```
+```{r}
+
+col_fun = circlize::colorRamp2(c(-1, 0, 2), viridis(20)[c(1,10, 20)])
+
+
+cell_fun = function(j, i, x, y, w, h, fill){
+          grid.rect(x = x, y = y, width = w, height = h, 
+                    gp = gpar(col = NA, fill = NA))
+          grid.circle(x=x,y=y,r= pindex(percent_mat, i, j)/100 * min(unit.c(w, h)),
+                      gp = gpar(fill = col_fun(exp_mat[i, j]), col = NA))}
+## also do a kmeans clustering for the genes with k = 4
+cell_type<-c("B-cells", "T-cells","B-cells","B-cells", "Myeloid",  "NI")
+cluster_anno<-c("NBC_MBC", "T-cells", "GCBC","PBC","Myeloid","NI")
+column_ha<- HeatmapAnnotation(
+    cell_type = cell_type,
+    col = list(cell_type = setNames(brewer.pal(4, "Paired"), unique(cell_type))
+    ),
+    na_col = "grey"
+)
+
+
+Heatmap(exp_mat,
+        heatmap_legend_param=list(title="exp"),
+        column_title = "clustered dotplot", 
+        col=col_fun,
+        rect_gp = gpar(type = "none"),
+        cell_fun = cell_fun,
+        row_names_gp = gpar(fontsize = 5),
+       #row_km = 6,
+        #border = "black",
+        show_column_dend = FALSE,
+       #show_row_dend = FALSE,
+        row_gap = unit(2, "mm"),
+       top_annotation = column_ha)
+```
+
+```{r}
+ha = HeatmapAnnotation(
+    Sex = c("male","male","male","male","male"), 
+    Age_group = c("kid","kid","young_adult","young_adult","adult"),
+    Hospital=c("Clinica Universitaria de Navarra-Pamplona","Clinica Universitaria de Navarra-Pamplona","Clinica Universitaria de Navarra-Pamplona","Clinica Universitaria de Navarra-Pamplona", "H. Cinic-Barcelona"),
+    col = list(sex= "blue",
+               Age_group = col_fun,
+               Hospital = c("Clinica Universitaria de Navarra-Pamplona" = "orange", "H. Cinic-Barcelona" = "red")) )ç
+ha
+
+```
+
+```{r}
+p <- Heatmap(exp_mat,
+        heatmap_legend_param=list(title="expression"),
+        column_title = "clustered dotplot", 
+        col=col_fun,
+        rect_gp = gpar(type = "none"),
+        cell_fun = cell_fun,
+        row_names_gp = gpar(fontsize = 5),
+       # row_km = 6,
+  
+        show_column_dend = FALSE,
+        row_gap = unit(2, "mm"))
+#rasterize(p, dpi = 300)
+pdf(paste("/Users/mlromeror/Documents/multiome_tonsil_Lucia/Figures/
+", "Dotplot_all_data.pdf", sep=""),width=5,height=5,paper="special")
+p
+dev.off()
+```
+```{r}
+cell_type<-c("B-cells", "T-cells","B-cells","B-cells", "Myeloid",  "NI")
+cluster_anno<-c("NBC_MBC", "T-cells", "GCBC","PBC","Myeloid","NI")
+
+column_ha<- HeatmapAnnotation(
+    cell_type = cell_type,
+    cluster_anno = cluster_anno,
+    col = list(cell_type = setNames(brewer.pal(4, "Dark2"), unique(cell_type)),cluster_anno=setNames(brewer.pal(6, "Paired"), unique(cluster_anno))
+    ),
+    na_col = "grey"
+)
+
+
+Heatmap(exp_mat,
+        heatmap_legend_param=list(title="expression"),
+        column_title = "clustered dotplot", 
+        col=col_fun,
+        rect_gp = gpar(type = "none"),
+        cell_fun = cell_fun,
+        row_names_gp = gpar(fontsize = 7),
+       #row_km = 6,
+        #border = "black",
+        show_column_dend = FALSE,
+        row_gap = unit(2, "mm"),
+       show_column_names = FALSE,
+       top_annotation = column_ha)
+
+
+Heatmap(exp_mat, name = "exp", 
+        
+        row_names_gp = gpar(fontsize = 7),
+        show_column_dend = FALSE,
+        col=col_fun,
+        column_split = factor(cluster_anno),
+         top_annotation = column_ha,
+        show_column_names = FALSE,
+        )
+
+Heatmap(exp_mat, name = "exp", 
+        
+        row_names_gp = gpar(fontsize = 7),
+        show_column_dend = FALSE,
+        col=col_fun,
+        #column_split = factor(cluster_anno),
+         top_annotation = column_ha,
+        show_column_names = FALSE,
+        )
+```
+
+```{r}
+# Heatmap
+
+col_fun = colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+png(filename = "example_heatmap.png",
+    width = 1000,
+    height = 1000)
+Heatmap(
+  exp_mat,
+  col = col_fun,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  column_order = NULL,
+  show_row_dend = FALSE,
+  show_column_dend = FALSE,
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  use_raster = TRUE,
+  raster_device = c("png"),
+  bottom_annotation = NULL,
+  top_annotation = ha
+)
+dev.off()
+```
+
+```{r}
+
+library(tidyverse)
+library(RColorBrewer)
+markers<-c("BANK1", "FCER2","CD3D", "IL7R","MKI67", "TOP2A","MARCKSL1", "RGS13", "LMO2", "CCDC88A","GNLY", "NKG7", "GZMK", "CD8A",	"FCRL4", "FCRL5", "PLAC8", "SOX5","IGHG1", "IGHA1", "JCHAIN", "XBP1","LYZ", "S100A8","MT2A", "CD3D", "TRAC", "PCNA","CD19","CR2","MS4A1","RALGPS2","CD79A")
+
+cell_types <- names(table(tonsil_wnn$seurat_clusters_name))
+annotation_col = data.frame(
+                    cell_type = cell_types)
+rownames(annotation_col) <- cell_types
+
+
+
+
+
+mat<- tonsil_wnn[["RNA"]]@data[markers, ] %>% as.matrix()
+mycolors_list <- colorRampPalette(c("#377eb8","#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628"))(length(mat))
+## scale the rows
+mat<- t(scale(t(mat)))
+
+cluster_anno<- tonsil_wnn@meta.data$seurat_clusters_name
+```
+
+```{r}
+# what's the value range in the matrix
+quantile(mat, c(0.1, 0.95))
+```
+```{r}
+Seurat::PurpleAndYellow()
+```
+
+```{r}
+Heatmap(mat, name = "Expression",  
+        column_split = factor(cluster_anno),
+        cluster_columns = TRUE,
+        show_column_dend = FALSE,
+        cluster_column_slices = TRUE,
+        column_title_gp = gpar(fontsize = 8),
+        column_gap = unit(0.5, "mm"),
+        cluster_rows = TRUE,
+        show_row_dend = FALSE,
+        col = col_fun,
+        row_names_gp = gpar(fontsize = 4),
+        column_title_rot = 0,
+        top_annotation = HeatmapAnnotation(foo = anno_block(gp = gpar(fill = scales::hue_pal()(9)))),
+        show_column_names = FALSE,
+        use_raster = TRUE,
+        raster_quality = 4)
+```
+
+
+```{r}
+# mat<-AverageExpression(tonsil_wnn)$RNA
+# mat<-mat[markers,]
+pheatmap(mat,
+      scale = "row",
+      annotation_col = annotation_col,
+      annotation_colors = mycolors_list,
+      color = colfunc(100),
+      angle_col = 45,
+      show_rownames=F,
+      border_color = NA,
+      cluster_rows = T,
+      cluster_cols = F,
+      fontsize_col = 10,
+      cutree_rows = 6,
+      clustering_distance_cols = "euclidean",
+      clustering_method = "ward.D2")
+pheatmap
+
+```
+
+
+## violin plot 
+
+
+```{r}
+p0<-ggviolin(tonsil_wnn@meta.data, y="nCount_RNA", x="seurat_clusters")
+p0
+```
+
+```{r}
+p1<- VlnPlot(tonsil_wnn, features = "nCount_RNA", group.by = "seurat_clusters")
+p1 
+```
+
+```{r}
+weight.vp<- VlnPlot(tonsil_wnn, features = "RNA.weight", group.by = "seurat_clusters_name",pt.size = 0,cols =  c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c"))+theme(axis.text.x = element_text(angle = 0, hjust = 1))
+p.weight.vp<- VlnPlot(tonsil_wnn, features = "peaks.weight", group.by = "seurat_clusters_name",pt.size = 0,cols =  c("#a6cee3", "#1f78b4","#b2df8a", 
+             "#33a02c", "#fb9a99","#e31a1c"))+theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+weight.vp + ggtitle("RNA modality weight")+NoLegend()
+p.weight.vp+ ggtitle("ATAC modality weight")+NoLegend()
+```
+
+```{r}
+
+tonsil_wnn$weight<-c(tonsil_wnn$RNA.weight,tonsil_wnn$peaks.weight)
+
+weight<-as.data.frame(tonsil_wnn[[c("RNA.weight","peaks.weight","seurat_clusters")]])
+
+weight.melted<-melt(weight)
+
+ggviolin(
+  weight.melted,
+  x="seurat_clusters",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  color = "variable")
+```
+```{r}
+VlnPlot(object =tonsil_wnn, features = "variable", split.by = 'seurat_clusters')
+
+```
+
+
+Almost all the cluster are around 0.50 which means that the modalities are consist each other
+However cluster 0,1 and 2 have a lot of cell with very high weight so in peak weight we 
+should find the opposite. So that could means that these cluster are not sufficient to be classified 
+by atac modality. 
+
+
+# Markers exploration
+
+```{r}
+markers_gg <- function(x){purrr::map(x, function(x) {
+  
+  p <- FeaturePlot(
+    tonsil_wnn,
+    features = x,
+    reduction = "wnn.umap",
+    pt.size = 0.1
+  )
+  p
+})}
+
+```
+
+
+**MARKERS**
+
+Immature B cells express CD19, CD20, CD34, CD38, and CD45R,
+T-cell receptor/CD3 complex (TCR/CD3 complex) 
+As an example, we will create an expression matrix with the following cells:
+
+
+```{r}
+canonical_bcell_markers <-c("CD34", "CD38", "CD19")
+
+markers <- c("BANK1","CD3D", "CD79B","CD79A","CD19", "CD34", "CD38","ITK", "CCL5","NKG7","THEMIS","LYZ","LRMDA","CPVL","DACH1","EPHB1","TCF4","MAML3","AOAH", "MS4A1","CR2","IL3RA","CD3E","CD4","CD8A","FOXP3","IL17A","RALGPS2","FCRL5","KYNU","HVCN1")
+
+bib_Bcell_markers<-c("CD19","CR2","MS4A1","RALGPS2","CD79A")
+bib_Tcell_markers<-c("CD3E","CD4","CD8A","FOXP3","IL17A")
+
+markers_bcell<-c("BANK1","ARHGAP24","ADAM28","MARCH1","RAPGEF5","AFF2","RGS13","LPP","IGHG1","IGLC1","SLC8A1","LYZ","PLXDC2","FAM160A1","IGHA1","IGLC2", "SETBP1","ENTPD1","COL19A1","CCSER1")
+
+markers_tcell<-c("INPP4B","FYB1","LEF1","IL7R","IL6ST","CCL5","GNLY","NKG7","DTHD1","RUNX2", "FOXP3","CD8A","IL17A","CD2")
+
+```
+
+
+## Bibliography  markers
+
+### B cells
+
+B-cell markers: CD79A, MS4A1
+
+```{r}
+markers_gg (bib_Bcell_markers)
+
+```
+
+### T-cells
+
+CD8+ T cell markers:"CD3D", "CD8A"
+NK cell markers:"GNLY", "NKG7"
+
+```{r}
+
+markers_gg (bib_Tcell_markers)
+
+```
+
+
+### TOP 10 MARKERS
+
+```{r}
+top10mark_cluster0<-top10_tonsil_markers_02[["gene"]][1:10]
+top10mark_cluster1<-top10_tonsil_markers_02[["gene"]][11:20]
+top10mark_cluster2<-top10_tonsil_markers_02[["gene"]][21:30]
+top10mark_cluster3<-top10_tonsil_markers_02[["gene"]][31:40]
+top10mark_cluster4<-top10_tonsil_markers_02[["gene"]][41:50]
+top10mark_cluster5<-top10_tonsil_markers_02[["gene"]][51:60]
+
+```
+
+### Cluster 0
+
+
+```{r}
+markers_gg(top10mark_cluster0)
+```
+
+
+```{r}
+markers_gg(c("MS4A1","NT5E"))
+```
+MS4A1:NAIVE-MEMORY B CELL
+NT5E: NAIVE B CELL 
+
+### Cluster 1: 
+
+
+```{r}
+markers_gg(top10mark_cluster1)
+```
+
+
+### Cluster 2: 
+
+
+```{r}
+markers_gg(top10mark_cluster2)
+```
+
+
+
+### Cluster 3:
+
+```{r}
+markers_gg(top10mark_cluster3)
+```
+INPP4B: Immune cell enhanced (memory CD4 T-cell)
+
+
+
+### Cluster 4
+
+
+```{r}
+markers_gg(top10mark_cluster4)
+```
+
+
+### Cluster 5
+
+```{r}
+markers_gg(top10mark_cluster5)
+```
+
+### TOP 5 MARKERS
+
+```{r}
+top5mark_cluster0<-top5_tonsil_markers_02[["gene"]][1:5]
+top5mark_cluster1<-top5_tonsil_markers_02[["gene"]][6:10]
+top5mark_cluster2<-top5_tonsil_markers_02[["gene"]][11:15]
+top5mark_cluster3<-top5_tonsil_markers_02[["gene"]][16:20]
+top5mark_cluster4<-top5_tonsil_markers_02[["gene"]][21:25]
+top5mark_cluster5<-top5_tonsil_markers_02[["gene"]][26:30]
+
+```
+### Cluster 0
+
+
+```{r}
+markers_gg(top5mark_cluster0)
+```
+
+
+
+### Cluster 1: 
+
+
+```{r}
+markers_gg(top5mark_cluster1)
+```
+
+
+### Cluster 2: 
+
+
+```{r}
+markers_gg(top5mark_cluster2)
+```
+
+
+
+### Cluster 3:
+
+```{r}
+markers_gg(top5mark_cluster3)
+```
+INPP4B: Immune cell enhanced (memory CD4 T-cell)
+
+
+
+### Cluster 4
+
+AOAH: NK
+GNLY:NK
+
+
+```{r}
+markers_gg(top5mark_cluster4)
+```
+
+
+### Cluster 5
+
+```{r}
+markers_gg(top5mark_cluster5)
+```
+
+
+
+### B-cells
+
+```{r}
+m<-c("PRDM1","XBP1","IRF4","MEF2B","BCL6")
+
+markers_gg (m)
+
+```
+
+
+```{r}
+markers_gg (markers_bcell)
+
+```
+
+### T-cells
+
+```{r}
+markers_gg (markers_tcell)
+
+```
+
+## Cell state exploration
+
+```{r}
+naive_mem_tcell<-c( "CCR7", "SELL")
+active_t_b_cell<-c("CREM", "CD69")
+stress_dying_cell<- c("HSPB1", "DNAJB6", "HSPH1", "GADD45B")
+```
+
+### canonical markers
+
+Based on the expression of known canonical markers of B cell development 
+(CD34, CD38, CD10, CD19, IGH, and CD20)
+
+cd10,cd20 and igh were no found
+
+```{r}
+markers_gg(canonical_bcell_markers)
+```
+
+
+### Naive or memory T cells
+
+```{r}
+markers_gg(naive_mem_tcell)
+```
+
+### Activated T and B cells
+
+```{r}
+markers_gg(active_t_b_cell)
+
+```
+
+### Stressed or dying cells
+
+```{r}
+markers_gg(stress_dying_cell)
+
+```
+## Pauli markers
+
+
+```{r}
+naive_mem_bcell<-c("BANK1", "FCER2")
+dz_gc_bcell<-c("MKI67", "TOP2A")
+lz_gc_bcell<-c("MARCKSL1", "RGS13", "LMO2", "CCDC88A")	
+memory_bcell<-c(	"FCRL4", "FCRL5", "PLAC8", "SOX5")
+pc<-c("IGHG1", "IGHA1", "JCHAIN", "XBP1")
+myeloid<-c("LYZ", "S100A8")	
+poor_q_doublets <-c("FDCSP", "CLU", "CXCL13", "CR2")
+doublet_proliferative_tcell<-c("MT2A", "CD3D", "TRAC", "PCNA")
+Unk<-c("PTPRCAP", "CD37", "CD74")	
+PDC<-c("PTCRA", "LILRA4", "IRF7")
+cd4_tcell<-c("CD3D", "IL7R")
+cytotoxic<-c("GNLY", "NKG7", "GZMK", "CD8A")
+myeloid<-c("LYZ", "S100A8")	
+```
+
+```{r}
+markers_gg(c("TCL1A","IGHD","FCER2","IGHM","IL4R"))
+
+```
+```{r}
+markers_gg(cd4_tcell)
+```
+```{r}
+markers_gg(cytotoxic)
+```
+```{r}
+markers_gg(myeloid)
+```
+```{r}
+markers_gg(naive_mem_bcell)
+```
+```{r}
+markers_gg(memory_bcell)
+```
+
+
+```{r}
+
+markers_gg(dz_gc_bcell)
+```
+
+```{r}
+markers_gg(lz_gc_bcell)
+```
+
+
+```{r}
+markers_gg(pc)
+```
+
+
+```{r}
+markers_gg(poor_q_doublets)
+```
+
+
+
+ Proliferating cell nuclear antigen (PCNA)
+ 
+```{r}
+
+markers_gg(Unk)
+```
+
+```{r}
+
+markers_gg(PDC)
+
+```
+
+
+```{r}
+markers_gg( "MYO1E")
+```
+
+
+
+
+
+
+# CellCycleScoring 
+
+```{r}
+DimPlot(tonsil_wnn, reduction = "wnn.umap",group.by = "Phase", label = TRUE, pt.size = 0.5) 
+
+```
+
+
+```{r}
+DimPlot(tonsil_wnn, reduction = "wnn.umap",split.by = "Phase", label = TRUE, pt.size = 0.5) 
+
+```
+# Rename clusters
+
+```{r}
+DimPlot(
+    tonsil_wnn,
+    group.by = "wsnn_res.0.02",
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )+NoLegend()
+  
+
+```
+
+```{r}
+new.cluster.ids <- c("NBC_MBC", "T-cells  ","GCBC", "PBC", "Myeloid", "NI")
+names(new.cluster.ids) <- levels(tonsil_wnn)
+tonsil_wnn <- RenameIdents(tonsil_wnn, new.cluster.ids) 
+DimPlot(tonsil_wnn, reduction = "wnn.umap", label = TRUE, pt.size = 0.5)+NoLegend()
+```
+```{r}
+tonsil_wnn$seurat_clusters_name<-Idents(tonsil_wnn)
+
+```
+
+```{r}
+new.cluster.ids <- c("B-cells", "T-cells","B-cells", "B-cells", "Myeloid", "NA")
+names(new.cluster.ids) <- levels(tonsil_wnn)
+tonsil_wnn <- RenameIdents(tonsil_wnn, new.cluster.ids)
+DimPlot(tonsil_wnn, reduction = "wnn.umap", label = TRUE, pt.size = 0.5)+NoLegend()
+```
+
+```{r}
+tonsil_wnn$seurat_clusters_celltype<-Idents(tonsil_wnn)
+
+```
+
+
+# Heat Map
+
+```{r}
+# Extract normalized counts for only the significant genes
+sig_norm <- data.frame(normalized_counts) %>%
+        rownames_to_column(var = "gene") %>%
+        dplyr::filter(gene %in% sig_res$gene)
+        
+# Set a color palette
+heat_colors <- brewer.pal(6, "YlOrRd")
+
+# Run pheatmap using the metadata data frame for the annotation
+pheatmap(sig_norm[ , 2:length(colnames(sig_norm))], 
+    color = heat_colors, 
+    cluster_rows = T, 
+    show_rownames = F,
+    annotation = cluster_metadata[, c("group_id", "cluster_id")], 
+    border_color = NA, 
+    fontsize = 10, 
+    scale = "row", 
+    fontsize_row = 10, 
+    height = 20)  
+```
+
+```{r}
+# create a scale.data slot for the selected genes
+alldata <- ScaleData(alldata, features = as.character(unique(top5$gene)), assay = "RNA")
+DoHeatmap(alldata, features = as.character(unique(top5$gene)), group.by = sel.clust,
+    assay = "RNA")
+```
+
+
+# Save
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(tonsil_wnn, path_to_save)
+```
+
+
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

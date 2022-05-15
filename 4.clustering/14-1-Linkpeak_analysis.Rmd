@@ -1,0 +1,498 @@
+---
+title: "13-Link peak"
+author: 
+- name: "Maria Lucia Romero Rivero"
+  email: MLROMEROR@clinic.cat
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pre-processing 
+
+## Load package
+
+
+```{r message=FALSE, warning=FALSE}
+library("RColorBrewer")
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(EnsDb.Hsapiens.v86)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(kableExtra)
+library(tidyverse)
+library(ggpubr)
+library(reshape2)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(biomaRt)
+library(BiocManager)
+set.seed(123)
+```
+
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.1.tonsil_multiome_bcells_Linkpeaks_normalized.rds")
+
+path_to_obj_alldata <- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/12.1.tonsil_multiome_without_cluster7_doublets_normalized_Linkpeak.rds")
+
+path_to_markers<-("~/Documents/multiome_tonsil_Lucia/results/tables/tonsil_markers_bcell_withoutclust4_075.csv")
+
+
+```
+
+
+## Load data
+
+```{r}
+tonsil_wnn_bcell_linkpeak <- readRDS(path_to_obj)
+#tonsil_wnn_alldata <- readRDS(path_to_obj_alldata)
+tonsil_wnn_bcl6_pdmd1<-readRDS("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.4.tonsil_multiome_bcells_LP_bcl6_prdm1.rds")
+tonsil_markers_075<-read_csv(path_to_markers)
+```
+
+# UMAP 
+
+```{r}
+ DimPlot(
+    tonsil_wnn_bcell_linkpeak,
+    group.by = "wsnn_res.0.075",
+    reduction = "wnn.umap",
+    pt.size = 0.1, label = T
+  )
+```
+
+# Rename clusters
+
+
+```{r}
+#m<-c("PRDM1","XBP1","IRF4","MEF2B","BCL6", "SUGCT", "CXCR4","CD83","BCL2A1","MEF2B", "BCL6","IRF4","PRDM1","SLAMF7")
+m<-c("PRDM1","BCL6")
+
+idents.plot<-Idents(tonsil_wnn_bcell_linkpeak)
+
+coverage_gg <- function(x,seuratobject){purrr::map(x, function(x) {
+  
+  p <- CoveragePlot(
+  object = seuratobject,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 5000000,
+  extend.downstream = 10000000
+  #tile = TRUE
+  )
+  p
+})}
+
+```
+
+
+
+```{r}
+Idents(tonsil_wnn_bcell_linkpeak)<-"wsnn_res.0.075"
+new.cluster.ids <- c("MBC","NBC", "GC/DZ", "GC/LZ","PC","M/N BC")
+
+names(new.cluster.ids) <- levels(tonsil_wnn_bcell_linkpeak)
+tonsil_wnn_bcell_linkpeak <- RenameIdents(tonsil_wnn_bcell_linkpeak, new.cluster.ids)
+DimPlot(tonsil_wnn_bcell_linkpeak, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+```
+
+
+```{r}
+idents.plot<-c("MBC","NBC", "GC/DZ", "GC/LZ","PC","M/N BC")
+DefaultAssay(tonsil_wnn_bcell_linkpeak) <- "ATAC"
+
+coverage_gg(m,tonsil_wnn_bcl6_pdmd1)
+```
+
+
+```{r}
+CoveragePlot(
+  object = tonsil_wnn_bcell_linkpeak,
+  region = "BCL6",
+  features = "BCL6",
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = 10000,
+  extend.downstream = 300000
+  #tile = TRUE
+  )
+```
+
+
+```{r}
+tile_plot <- TilePlot(
+  object = tonsil_wnn_bcell_linkpeak,
+  region = "BCL6",
+  idents = idents.plot
+)
+tile_plot
+```
+
+
+
+
+```{r}
+hist(tonsil_wnn_bcell_linkpeak@assays[["ATAC"]]@links@elementMetadata@listData[["score"]])
+```
+
+```{r}
+plot(density(tonsil_wnn_bcell_linkpeak@assays[["ATAC"]]@links@elementMetadata@listData[["score"]])
+)
+
+```
+
+# 2 markers for cluster
+
+
+```{r}
+top2_tonsil_markers_075<-tonsil_markers_075 %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+
+```
+
+```{r}
+top2_1<-top2_tonsil_markers_075$...1[1:6]
+top2_2<-top2_tonsil_markers_075$...1[8:12]
+top2<-c(top2_1,top2_1)
+
+DefaultAssay(tonsil_wnn_bcell_linkpeak) <- "ATAC"
+
+coverage_gg(top2,tonsil_wnn_bcell_linkpeak)
+```
+
+
+
+# Link peaks of BCL6 and PRDM1
+
+```{r}
+idents.plot<-c("MBC", "NBC", "GC/DZ", "GC/LZ", "PC", "M/N BC")
+coverage_extend <- function(x,y,seuratobject){purrr::map(y, function(y) {
+  
+  p <- CoveragePlot(
+  object = seuratobject,
+  region = x,
+  features = x,
+  expression.assay = "RNA",
+  idents = idents.plot,
+  extend.upstream = y,
+  extend.downstream = y
+  #tile = TRUE
+  )
+  p
+})}
+```
+
+```{r}
+coverage_extend("BCL6",c(0,10000,1000000),tonsil_wnn_bcl6_pdmd1)
+```
+
+```{r}
+coverage_gg("PRDM1",tonsil_wnn_bcell_linkpeak)
+```
+
+```{r}
+p.list<-CoverageBrowse
+```
+
+
+```{r}
+CoveragePlot(
+object = tonsil_wnn_bcl6_pdmd1,
+region = "PRDM1",
+features = "PRDM1",
+expression.assay = "RNA"
+)
+
+```
+
+```{r}
+coverage_gg("PRDM1",tonsil_wnn_bcl6_pdmd1)
+```
+
+```{r}
+df_LP<-as.data.frame(Links(tonsil_wnn_bcl6_pdmd1))
+df_LP[df_LP$gene=="PRDM1",]
+df_LP
+```
+
+```{r}
+coverage_gg("BCL6",tonsil_wnn_bcl6_pdmd1)
+```
+
+
+```{r}
+CoveragePlot(
+object = tonsil_wnn_bcl6_pdmd1,
+region = "BCL6",
+features = "BCL6",
+expression.assay = "RNA"
+)
+
+```
+
+
+```{r}
+df[df_LP$gene=="BCL6",]
+
+```
+
+# Ensembl
+
+TSS is defined as the transcriptional start site.  This is where RNA polymerase begins transcribing the DNA.  This is also the beginning of the UTR (untranslated region), 
+assuming that the gene has a 5'UTR, which is typically the case for human genes.  The +1 nomenclature can be used to indicate the first base transcribed, or the first base
+translated, depending on context.  In genomics, +1 generally refers to the first base transcribed.  When cloning expression vectors, +1 usually indicates the position of the ATG or the first codon of the translated unit.  Hope this helps.
+
+The start coordinate of forward strand genes and the end coordinate of negative strand genes will represent the TSS of the most 5' transcript of the gene. 
+Other transcripts of the gene will have different TSSs. To get all TSSs, you should use the cDNA features in the file.
+
+```{r}
+# 1) select a mart and data set   
+
+ mart <- biomaRt::useDataset(dataset = "hsapiens_gene_ensembl",         
+                    mart    = useMart("ENSEMBL_MART_ENSEMBL",       
+                    host    = "https://www.ensembl.org/"))       
+
+
+ # 2) run a biomart query using the getBM() function        
+ # and specify the attributes and filter arguments      
+ geneSet <- c("BCL6","PRDM1")     
+
+resultTable <- function(geneSet){ 
+  biomaRt::getBM(attributes = c("external_gene_name","transcription_start_site","5_utr_start", "start_position","end_position","description","chromosome_name","strand"),       
+                      filters    = "hgnc_symbol",       
+                      values     = geneSet,         
+                      mart       = mart)        
+}
+
+resultTable_basic <- function(geneSet){ 
+  biomaRt::getBM(attributes = c("external_gene_name", "start_position","end_position","description","chromosome_name","strand"),       
+                      filters    = "hgnc_symbol",       
+                      values     = geneSet,         
+                      mart       = mart)        
+}
+
+
+ensembl_df<-do.call("rbind",lapply(geneSet, resultTable)) #combine all vectors into a matrix
+ensembl_Basic_df<-do.call("rbind",lapply(geneSet, resultTable_basic)) #combine all vectors into a matrix
+
+
+
+bcl6<-resultTable("BCL6")      
+prdm1<-resultTable("PRDM1")
+```
+
+## GRanger 
+
+
+```{r}
+## more recent data from internet
+ensembl <- useMart(biomart = "ensembl",dataset="hsapiens_gene_ensembl")
+ensembl
+Datasets <- listDatasets(ensembl)
+Datasets[grep("hsapiens_gene_ensembl",Datasets$dataset),] ## hg38 version!!!!!!!!
+hg38.gene.annot <- getBM(attributes = c("ensembl_gene_id","entrezgene_id","hgnc_symbol",
+                                       "chromosome_name","start_position","end_position",
+                                       "strand","band","gene_biotype"
+),
+mart = ensembl
+)
+
+table(hg38.gene.annot$chromosome_name,exclude=NULL)
+table(hg38.gene.annot$strand,exclude=NULL)
+## remove MT, sexual chromosomes and random chr. Arrange also strand info.
+hg38.gene.annot <- hg38.gene.annot[which(hg38.gene.annot$chromosome_name %in% paste0(1:22)),]
+hg38.gene.annot$chromosome_name <- paste0("chr",hg38.gene.annot$chromosome_name)
+hg38.gene.annot$strand[which(hg38.gene.annot$strand==1)] <- "+"
+hg38.gene.annot$strand[which(hg38.gene.annot$strand=="-1")] <- "-"
+table(hg38.gene.annot$chromosome_name,exclude=NULL)
+table(hg38.gene.annot$strand,exclude=NULL)
+head(hg38.gene.annot,100);dim(hg38.gene.annot)
+##polish gene annotation
+any(is.na(hg38.gene.annot$ensembl_gene_id))
+any(hg38.gene.annot$ensembl_gene_id=="")
+any(is.na(hg38.gene.annot$entrezgene_id))
+any(na.omit(hg38.gene.annot$entrezgene_id)=="")
+any(is.na(hg38.gene.annot$hgnc_symbol))
+any(hg38.gene.annot$hgnc_symbol=="")
+hg38.gene.annot$hgnc_symbol[which(hg38.gene.annot$hgnc_symbol=="")] <- NA
+
+##make GRange object
+hg38.gene.annot.GR <- GRanges(seqnames = hg38.gene.annot$chromosome_name,
+                             ranges = IRanges(hg38.gene.annot$start_position,end = hg38.gene.annot$end_position),
+                             strand = hg38.gene.annot$strand
+)
+mcols(hg38.gene.annot.GR) <- hg38.gene.annot[,grep("^chromosome_name$|^start_position$|^end_position|^strand$$",colnames(hg38.gene.annot),value = T,invert = T)]
+hg38.gene.annot.GR <- sort(sortSeqlevels(hg38.gene.annot.GR))
+hg38.gene.annot.GR
+## Extend 2,000bps upstream of promoters
+hg38.gene.annot.2000.GR <- punion(promoters(x = hg38.gene.annot.GR,upstream = 2000,downstream = 0),
+                                 hg38.gene.annot.GR
+)
+
+saveRDS(hg38.gene.annot.GR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-hg38.gene.annot.GR.rds")
+saveRDS(hg38.gene.annot.2000.GR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-hg38.gene.annot.2000.GR.rds")
+## add metadata of the genes names 
+
+values(hg38.gene.annot.GR) <- DataFrame(hgnc_symbol = hg38.gene.annot$hgnc_symbol)
+
+```
+
+
+
+In the following code snippets, x is a GRanges object.
+
+length(x): Get the number of elements.
+
+seqnames(x), seqnames(x) <- value: Get or set the sequence names. value can be an Rle object, a character vector, or a factor.
+
+ranges(x), ranges(x) <- value: Get or set the ranges. value can be a Ranges object.
+
+start(x), start(x) <- value: Get or set start(ranges(x)).
+
+end(x), end(x) <- value: Get or set end(ranges(x)).
+
+width(x), width(x) <- value: Get or set width(ranges(x)).
+
+strand(x), strand(x) <- value: Get or set the strand. value can be an Rle object, character vector, or factor.
+
+names(x), names(x) <- value: Get or set the names of the elements.
+
+
+```{r}
+length(hg38.gene.annot.GR)
+seqnames(hg38.gene.annot.GR)
+ranges(hg38.gene.annot.GR)
+```
+
+Note that the GRanges object has information to the “left” side of the | that has special accessors. The information to the right side of the |, when it is present, is the metadata and is accessed using mcols(), for “metadata columns”.
+
+```{r}
+mcols(hg38.gene.annot.GR)
+```
+
+**From dataframe to Granges**
+
+```{r}
+gr2<-GRanges(seqnames = df_LP$seqnames, ranges = IRanges(start=df_LP$start,end = df_LP$end),strand = df_LP$strand)
+
+```
+
+Find 'findOverlapsn {r}' in the gene body
+```{r}
+olap_gb<-findOverlaps(gr2,hg38.gene.annot.GR,type="within")
+olap_gb
+```
+
+
+```{r}
+subsetolap_GB<-subssetByOverlaps(gr2,hg38.gene.annot.GR,type="within")
+subsetolap_GB
+saveRDS(subsetolap_GB, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-subsetolap_GB.rds")
+
+```
+```{r}
+
+```
+
+```{r}
+length(subsetolap_GB)
+```
+
+## Promoter
+
+```{r}
+subsetolap_PR<-subsetByOverlaps(gr2,hg38.gene.annot.2000.GR,type="within")
+subsetolap_PR
+saveRDS(subsetolap_PR, "~/Documents/multiome_tonsil_Lucia/results/R_objects/14-subsetolap_PR.rds")
+```
+
+
+
+```{r}
+length(subsetolap_PR)
+names(gr2) <- df_LP$gene
+
+```
+
+```{r}
+gr1 <- hg38.gene.annot.GR
+m <- findOverlaps(gr2, gr1,type = "within")
+gr2.matched <- gr2[queryHits(m)]
+# Add the metadata from gr2
+mcols(gr2.matched) <- cbind.data.frame(
+names(gr2.matched),
+mcols(hg38.gene.annot.GR[subjectHits(m
+                                    )]))
+```
+
+
+# Weights
+
+```{r}
+weight.vp<- VlnPlot(tonsil_wnn_bcell_linkpeak, features = "RNA.weight", group.by = "wsnn_res.0.075",pt.size = 0)
+p.weight.vp<- VlnPlot(tonsil_wnn_bcell_linkpeak, features = c("peaks.weight","RNA.weight"), group.by = "wsnn_res.0.075",pt.size = 0)
+
+weight.vp + ggtitle("RNA modality weight")
+p.weight.vp+ ggtitle("ATAC modality weight")
+```
+
+```{r}
+VlnPlot(tonsil_wnn_bcell_linkpeak, features = c("peaks.weight","RNA.weight"), group.by = "wsnn_res.0.075",pt.size = 0)
+```
+
+
+```{r}
+tonsil_wnn$weight<-c(tonsil_wnn_bcell_linkpeak$RNA.weight,tonsil_wnn_bcell_linkpeak$peaks.weight)
+
+weight<-as.data.frame(tonsil_wnn_bcell_linkpeak[[c("RNA.weight","peaks.weight","seurat_clusters")]])
+
+weight.melted<-melt(weight)
+
+ggviolin(
+  weight.melted,
+  x="seurat_clusters",
+  y="value",
+  xlab = "Regions",
+  ylab = "Fraction of reads mapped",
+  color = "variable")
+
+```
+
+```{r}
+figure <- ggplot(weight.melted, aes(x = seurat_clusters, y = value, fill = variable)) + geom_violin() + 
+  labs(x="clusters", y="Weights")
+figure
+```
+
+
+# Save links peaks
+
+```{r eval=FALSE, include=FALSE}
+path_to_save<- ("~/Documents/multiome_tonsil_Lucia/results/R_objects/15.3.tonsil_multiome_bcells_GC_Linkpeaks.rds")
+
+
+saveRDS(tonsil_wnn_bcell_gc, path_to_save)
+saveRDS(tonsil_wnn_bcell_linkpeak, path_to_save_normalized)
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```
